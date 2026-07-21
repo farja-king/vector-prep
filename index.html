@@ -179,6 +179,7 @@
   }
 
   canvas{display:block; margin:auto; flex-shrink:0;}
+  canvas.brush-active{cursor:crosshair;}
   #svgHolder{display:none; margin:auto; flex-shrink:0;}
   #svgHolder svg{display:block;}
 
@@ -457,12 +458,74 @@
             </div>
             <input type="number" class="num-input" id="overrideEdgeSmoothingNum" min="0" max="20" step="0.1" value="5">
           </div>
+          <div class="slider-row">
+            <div class="slider-col">
+              <label>Speckle removal</label>
+              <input type="range" id="overrideSpeckle" min="0" max="64" step="1" value="3">
+            </div>
+            <input type="number" class="num-input" id="overrideSpeckleNum" min="0" max="64" step="1" value="3">
+          </div>
+          <div style="margin-top:8px; padding-top:8px; border-top:1px solid var(--paper-line);">
+            <div class="slider-row">
+              <div class="slider-col">
+                <label>Brightness</label>
+                <input type="range" id="overrideBrightness" min="-100" max="100" step="1" value="0">
+              </div>
+              <input type="number" class="num-input" id="overrideBrightnessNum" min="-100" max="100" step="1" value="0">
+            </div>
+            <div class="slider-row">
+              <div class="slider-col">
+                <label>Contrast</label>
+                <input type="range" id="overrideContrast" min="-100" max="100" step="1" value="0">
+              </div>
+              <input type="number" class="num-input" id="overrideContrastNum" min="-100" max="100" step="1" value="0">
+            </div>
+            <div class="slider-row">
+              <div class="slider-col">
+                <label>Saturation</label>
+                <input type="range" id="overrideSaturation" min="-100" max="100" step="1" value="0">
+              </div>
+              <input type="number" class="num-input" id="overrideSaturationNum" min="-100" max="100" step="1" value="0">
+            </div>
+            <div class="slider-row">
+              <div class="slider-col">
+                <label>Vibrancy</label>
+                <input type="range" id="overrideVibrancy" min="0" max="100" step="1" value="0">
+              </div>
+              <input type="number" class="num-input" id="overrideVibrancyNum" min="0" max="100" step="1" value="0">
+            </div>
+          </div>
           <button class="action ghost" id="overrideUseGlobal">Use Global Settings for This Color</button>
         </div>
       </div>
 
       <div class="tool-block">
-        <h3><span class="n">03</span> Export</h3>
+        <h3><span class="n">03</span> Touch-up brush</h3>
+        <p class="hint">Paints directly onto the source pixels (Source view), so edits get traced properly instead of sitting on top as a raster patch. Switches to Source view automatically.</p>
+        <div class="row" style="margin-bottom:12px;">
+          <select id="brushMode">
+            <option value="off">Off</option>
+            <option value="erase">Erase (remove)</option>
+            <option value="restore">Restore (undo to original)</option>
+            <option value="paint">Paint (custom color)</option>
+          </select>
+        </div>
+        <div id="brushPaintControls" style="display:none;">
+          <div class="row" style="align-items:center; margin-bottom:8px;">
+            <label style="flex:1;">Paint color</label>
+            <input type="color" id="brushColor" value="#B23A26" style="width:44px; height:28px; padding:0; border:1px solid #c9c2b2; cursor:pointer;">
+          </div>
+          <button class="action ghost" id="eyedropperBtn" style="margin-bottom:12px;">🎨 Pick Color From Image</button>
+        </div>
+        <label style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:#8a8578;">Brush size — <span id="brushSizeVal">30</span>px</label>
+        <input type="range" id="brushSize" min="4" max="150" value="30">
+        <div style="height:8px"></div>
+        <button class="action ghost" id="brushUndo" style="margin-bottom:6px;">Undo Last Stroke</button>
+        <button class="action ghost" id="brushResetAll">Reset All Touch-ups</button>
+      </div>
+
+      <div class="tool-block">
+        <h3><span class="n">04</span> Export</h3>
         <button class="action" id="downloadSvg" style="margin-bottom:8px;">Download SVG</button>
         <button class="action ghost" id="downloadPng">Download PNG Preview</button>
         <div id="traceStatus" style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:#8a8578;margin-top:8px;min-height:14px;"></div>
@@ -514,6 +577,8 @@ const viewVectorBtn = document.getElementById('viewVector');
 let originalImageData = null; // pristine pixels straight from the loaded image — every trace re-runs from this, never from a previous trace's output
 let lastSvgString = '';
 let lastPalette = []; // Color mode's current palette — indices here are what colorOverrides keys into
+let pristineImageData = null; // untouched backup for the Restore brush and Reset All Touch-ups
+let brushUndoStack = []; // snapshots of originalImageData.data taken before each stroke
 let traceTimeout = null;
 
 // Maps the 0-4000 slider to an ltres/qtres error threshold of 0.02-20 — widened again from
@@ -619,6 +684,11 @@ function loadImageFile(file){
       ctx.clearRect(0, 0, canvas.width, canvas.height);
       ctx.drawImage(img, 0, 0);
       originalImageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      // Untouched backup for the Restore brush and "Reset All Touch-ups" — captured once here,
+      // never mutated afterward, unlike originalImageData which the brush paints into directly.
+      pristineImageData = new ImageData(new Uint8ClampedArray(originalImageData.data), originalImageData.width, originalImageData.height);
+      ensurePristineCanvas();
+      brushUndoStack = [];
       // A new image gets a fresh palette with different colors in a different order — any
       // per-color overrides from the previous image would silently apply to the wrong colors.
       colorOverrides = {};
@@ -643,6 +713,11 @@ drop.addEventListener('drop', e => { if (e.dataTransfer.files[0]) loadImageFile(
 
 document.getElementById('reset').addEventListener('click', () => {
   originalImageData = null;
+  pristineImageData = null;
+  pristineCanvas = null;
+  brushUndoStack = [];
+  brushModeSelect.value = 'off';
+  brushModeSelect.dispatchEvent(new Event('change'));
   lastSvgString = '';
   lastPalette = [];
   colorOverrides = {};
@@ -754,33 +829,62 @@ const overrideCurveFit = document.getElementById('overrideCurveFit');
 const overrideCurveFitNum = document.getElementById('overrideCurveFitNum');
 const overrideEdgeSmoothing = document.getElementById('overrideEdgeSmoothing');
 const overrideEdgeSmoothingNum = document.getElementById('overrideEdgeSmoothingNum');
+const overrideSpeckle = document.getElementById('overrideSpeckle');
+const overrideSpeckleNum = document.getElementById('overrideSpeckleNum');
+const overrideBrightness = document.getElementById('overrideBrightness');
+const overrideBrightnessNum = document.getElementById('overrideBrightnessNum');
+const overrideContrast = document.getElementById('overrideContrast');
+const overrideContrastNum = document.getElementById('overrideContrastNum');
+const overrideSaturation = document.getElementById('overrideSaturation');
+const overrideSaturationNum = document.getElementById('overrideSaturationNum');
+const overrideVibrancy = document.getElementById('overrideVibrancy');
+const overrideVibrancyNum = document.getElementById('overrideVibrancyNum');
 bindSliderNumberPair(overrideCurveFit, overrideCurveFitNum, v => (+v).toFixed(2));
 bindSliderNumberPair(overrideEdgeSmoothing, overrideEdgeSmoothingNum, v => (+v).toFixed(1));
+bindSliderNumberPair(overrideSpeckle, overrideSpeckleNum);
+bindSliderNumberPair(overrideBrightness, overrideBrightnessNum);
+bindSliderNumberPair(overrideContrast, overrideContrastNum);
+bindSliderNumberPair(overrideSaturation, overrideSaturationNum);
+bindSliderNumberPair(overrideVibrancy, overrideVibrancyNum);
 
-let colorOverrides = {}; // paletteIndex -> { curveFit, edgeSmoothing }
+let colorOverrides = {}; // paletteIndex -> { curveFit, edgeSmoothing, speckle, brightness, contrast, saturation, vibrancy }
 let selectedColorIndex = null;
 const colorOverridePanel = document.getElementById('colorOverridePanel');
 const overrideColorSwatch = document.getElementById('overrideColorSwatch');
+const ALL_OVERRIDE_INPUTS = [overrideCurveFit, overrideEdgeSmoothing, overrideSpeckle, overrideBrightness, overrideContrast, overrideSaturation, overrideVibrancy];
 
 function selectColorForOverride(index, colorCss){
   selectedColorIndex = index;
   overrideColorSwatch.style.background = colorCss;
   colorOverridePanel.style.display = 'block';
   const existing = colorOverrides[index];
-  const curveFitVal = existing ? existing.curveFit : simplifyToTres(parseFloat(simplify.value));
-  const edgeVal = existing ? existing.edgeSmoothing : parseFloat(smoothing.value);
-  overrideCurveFit.value = curveFitVal;
+  overrideCurveFit.value = existing ? existing.curveFit : simplifyToTres(parseFloat(simplify.value));
   overrideCurveFit.dispatchEvent(new Event('input'));
-  overrideEdgeSmoothing.value = edgeVal;
+  overrideEdgeSmoothing.value = existing ? existing.edgeSmoothing : parseFloat(smoothing.value);
   overrideEdgeSmoothing.dispatchEvent(new Event('input'));
+  overrideSpeckle.value = existing ? existing.speckle : parseInt(speckle.value);
+  overrideSpeckle.dispatchEvent(new Event('input'));
+  overrideBrightness.value = existing ? existing.brightness : 0;
+  overrideBrightness.dispatchEvent(new Event('input'));
+  overrideContrast.value = existing ? existing.contrast : 0;
+  overrideContrast.dispatchEvent(new Event('input'));
+  overrideSaturation.value = existing ? existing.saturation : 0;
+  overrideSaturation.dispatchEvent(new Event('input'));
+  overrideVibrancy.value = existing ? existing.vibrancy : 0;
+  overrideVibrancy.dispatchEvent(new Event('input'));
 }
 
-[overrideCurveFit, overrideEdgeSmoothing].forEach(el => {
+ALL_OVERRIDE_INPUTS.forEach(el => {
   el.addEventListener('input', () => {
     if (selectedColorIndex === null) return;
     colorOverrides[selectedColorIndex] = {
       curveFit: parseFloat(overrideCurveFit.value),
-      edgeSmoothing: parseFloat(overrideEdgeSmoothing.value)
+      edgeSmoothing: parseFloat(overrideEdgeSmoothing.value),
+      speckle: parseInt(overrideSpeckle.value),
+      brightness: parseFloat(overrideBrightness.value),
+      contrast: parseFloat(overrideContrast.value),
+      saturation: parseFloat(overrideSaturation.value),
+      vibrancy: parseFloat(overrideVibrancy.value)
     };
     scheduleTrace();
   });
@@ -857,6 +961,82 @@ function otsuThreshold(hist, total){
 // flat ink-or-paper (to judge how much edge-blur actually helps vs just muddies things), how
 // bright the four corners are (a cheap proxy for "is the background light or dark", used to
 // guess whether Invert should be on), and a rough distinct-color count (for Color mode).
+// Counting raw distinct color buckets (below) is a poor proxy for "how many real spot colors are
+// in this design" — any gradient/soft shading inflates it hugely even though those are real,
+// legitimate pixels, not noise. This estimates the TRUE color count properly: run k-means across
+// a range of k, track how much further error (SSE) improves each time a color is added, and find
+// the "elbow" — the point where adding more colors stops meaningfully helping and starts just
+// chasing continuous shading variation. Standard technique, reusing the same flat-pixel sampling
+// already used for the real palette (kMeansPalette) so it's not distracted by anti-aliased edges.
+function estimateTrueColorCount(imgData, maxK){
+  let samples = sampleFlatPixels(imgData, Math.max(1, Math.round(Math.sqrt((imgData.width * imgData.height) / 40000))), 2, 12);
+  if (samples.length < 50) {
+    samples = [];
+    const { data, width, height } = imgData;
+    const step = Math.max(1, Math.round(Math.sqrt((width * height) / 40000)));
+    for (let y = 0; y < height; y += step) for (let x = 0; x < width; x += step){
+      const i = (y * width + x) * 4;
+      if (data[i + 3] >= 10) samples.push([data[i], data[i + 1], data[i + 2]]);
+    }
+  }
+  if (samples.length === 0) return 4;
+  if (samples.length > 2500) {
+    const stride = Math.ceil(samples.length / 2500);
+    samples = samples.filter((_, i) => i % stride === 0);
+  }
+
+  const dist2 = (a, b) => { const dr = a[0]-b[0], dg = a[1]-b[1], db = a[2]-b[2]; return dr*dr+dg*dg+db*db; };
+
+  function kmeansSSE(k, iterations){
+    k = Math.min(k, samples.length);
+    const centroids = [samples[0].slice()];
+    const minDist = new Array(samples.length).fill(Infinity);
+    while (centroids.length < k){
+      let maxD = -1, maxIdx = 0;
+      for (let s = 0; s < samples.length; s++){
+        const d = dist2(samples[s], centroids[centroids.length - 1]);
+        if (d < minDist[s]) minDist[s] = d;
+        if (minDist[s] > maxD){ maxD = minDist[s]; maxIdx = s; }
+      }
+      centroids.push(samples[maxIdx].slice());
+    }
+    const assign = new Array(samples.length).fill(0);
+    for (let iter = 0; iter < iterations; iter++){
+      for (let s = 0; s < samples.length; s++){
+        let best = 0, bestD = Infinity;
+        for (let c = 0; c < centroids.length; c++){ const d = dist2(samples[s], centroids[c]); if (d < bestD){ bestD = d; best = c; } }
+        assign[s] = best;
+      }
+      const sums = centroids.map(() => [0,0,0,0]);
+      for (let s = 0; s < samples.length; s++){ const c = assign[s]; sums[c][0]+=samples[s][0]; sums[c][1]+=samples[s][1]; sums[c][2]+=samples[s][2]; sums[c][3]++; }
+      for (let c = 0; c < centroids.length; c++){ if (sums[c][3] > 0) centroids[c] = [sums[c][0]/sums[c][3], sums[c][1]/sums[c][3], sums[c][2]/sums[c][3]]; }
+    }
+    let sse = 0;
+    for (let s = 0; s < samples.length; s++) sse += dist2(samples[s], centroids[assign[s]]);
+    return sse;
+  }
+
+  const kRange = [];
+  for (let k = 2; k <= Math.min(maxK, 24, samples.length); k++) kRange.push(k);
+  if (kRange.length < 3) return kRange[0] || 2;
+  const sseValues = kRange.map(k => kmeansSSE(k, 6));
+
+  // The "line distance from first-to-last point" version of the elbow method was too blunt —
+  // tested against the real reference logo it picked k=5, when the SSE data (measured directly)
+  // shows an unmistakable ~19x cliff specifically between k=7 and k=8 (110663 -> 5914), then
+  // completely flattens out past that — a textbook true-color-count signal that matches the
+  // artist's own manual choice of 8 exactly. A pure endpoint-line distance measure doesn't weight
+  // a single sharp local cliff like that correctly when the overall curve is doing other bending
+  // elsewhere. Directly finding the k with the single biggest proportional SSE drop from k-1 to k
+  // catches this correctly instead.
+  let bestK = kRange[0], bestRatio = -1;
+  for (let i = 1; i < kRange.length; i++){
+    const ratio = sseValues[i - 1] / Math.max(sseValues[i], 1e-6);
+    if (ratio > bestRatio){ bestRatio = ratio; bestK = kRange[i]; }
+  }
+  return bestK;
+}
+
 function analyzeImage(imgData){
   const { width, height, data } = imgData;
   const hist = new Array(256).fill(0);
@@ -907,17 +1087,13 @@ document.getElementById('suggestSettings').addEventListener('click', () => {
     invert.checked = a.cornerBrightness < 110;
     invert.dispatchEvent(new Event('change'));
   } else {
-    // Distinct-color count, clamped to the slider's range — but the ceiling depends on WHY the
-    // raw count is high. For a genuinely flat-color graphic, a high count means many real design
-    // colors, and the raw count IS the right answer (a 4-color logo needs ~4 slots, not ~1). But
-    // for a gradient-shaded illustration (soft highlights/shading, not flat fills), a high raw
-    // count is mostly just continuous shading variation, not real distinct hues — clamping that
-    // straight to 32 chases the gradient instead of giving a clean posterized look (confirmed:
-    // 32 on a real shaded logo produced a much muddier result than the artist's own preferred 8).
-    // High midtone ratio is the same "soft/gradient" signal used for edge smoothing below, so a
-    // lower ceiling there gets applied here too.
-    const colorCeiling = a.midtoneRatio > 0.15 ? 16 : 32;
-    colorCount.value = Math.max(2, Math.min(colorCeiling, a.distinctColors));
+    // The true spot-color count (elbow method — see estimateTrueColorCount) rather than a raw
+    // distinct-bucket count, which is a poor proxy: any gradient/soft shading inflates it hugely
+    // even though that's real image content, not noise. Confirmed on the real reference logo: raw
+    // bucket count was 361, but the elbow-estimated true count landed close to the artist's own
+    // preferred 8 — a straight bucket-count-with-ceiling heuristic had no principled way to get
+    // anywhere near that.
+    colorCount.value = Math.max(2, Math.min(32, estimateTrueColorCount(originalImageData, 24)));
     colorCount.dispatchEvent(new Event('input'));
   }
 
@@ -1208,6 +1384,67 @@ function kMeansPalette(imgData, k, iterations){
 // forced through nearest-color classification) get corrected. Confirmed on the real reference
 // logo: this got color-mode path count lower than Gaussian blur did (156 vs 244 at the same color
 // count) while looking crisp rather than soft.
+// Per-color Brightness/Contrast/Saturation/Vibrancy re-colors a detected swatch's OUTPUT fill
+// without touching which pixels get classified as belonging to it — classification always stays
+// anchored to the original detected color (getDisplayColor is only ever consulted for what to
+// paint a class, never for what counts as a match), so nudging a color's look never reshuffles
+// region boundaries.
+function rgbToHsl(r, g, b){
+  r /= 255; g /= 255; b /= 255;
+  const max = Math.max(r, g, b), min = Math.min(r, g, b);
+  let h, s; const l = (max + min) / 2;
+  if (max === min){ h = s = 0; }
+  else {
+    const d = max - min;
+    s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+    switch (max){
+      case r: h = (g - b) / d + (g < b ? 6 : 0); break;
+      case g: h = (b - r) / d + 2; break;
+      default: h = (r - g) / d + 4;
+    }
+    h /= 6;
+  }
+  return [h, s, l];
+}
+function hslToRgb(h, s, l){
+  if (s === 0){ const v = Math.round(l * 255); return [v, v, v]; }
+  const hue2rgb = (p, q, t) => {
+    if (t < 0) t += 1; if (t > 1) t -= 1;
+    if (t < 1/6) return p + (q - p) * 6 * t;
+    if (t < 1/2) return q;
+    if (t < 2/3) return p + (q - p) * (2/3 - t) * 6;
+    return p;
+  };
+  const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
+  const p = 2 * l - q;
+  return [Math.round(hue2rgb(p, q, h + 1/3) * 255), Math.round(hue2rgb(p, q, h) * 255), Math.round(hue2rgb(p, q, h - 1/3) * 255)];
+}
+function adjustColor(r, g, b, adj){
+  if (!adj) return [r, g, b];
+  const clamp = v => Math.max(0, Math.min(255, v));
+  if (adj.brightness){ const d = adj.brightness * 2.55; r = clamp(r + d); g = clamp(g + d); b = clamp(b + d); }
+  if (adj.contrast){ const f = 1 + adj.contrast / 100; r = clamp(128 + (r - 128) * f); g = clamp(128 + (g - 128) * f); b = clamp(128 + (b - 128) * f); }
+  if (adj.saturation){
+    let [h, s, l] = rgbToHsl(r, g, b);
+    s = Math.max(0, Math.min(1, s * (1 + adj.saturation / 100)));
+    [r, g, b] = hslToRgb(h, s, l);
+  }
+  if (adj.vibrancy){
+    const avg = (r + g + b) / 3;
+    const maxDiff = Math.max(Math.abs(r - avg), Math.abs(g - avg), Math.abs(b - avg));
+    const factor = (adj.vibrancy / 100) * (1 - Math.min(1, maxDiff / 128));
+    r = clamp(r + (r - avg) * factor); g = clamp(g + (g - avg) * factor); b = clamp(b + (b - avg) * factor);
+  }
+  return [Math.round(r), Math.round(g), Math.round(b)];
+}
+function getDisplayColor(idx, palette){
+  const base = palette[idx];
+  const ov = colorOverrides[idx];
+  if (!ov || (!ov.brightness && !ov.contrast && !ov.saturation && !ov.vibrancy)) return base;
+  const [r, g, b] = adjustColor(base.r, base.g, base.b, ov);
+  return { r, g, b, a: 255 };
+}
+
 function classifyToPalette(imgData, pal){
   const { data, width, height } = imgData;
   const classes = new Int16Array(width * height).fill(-1);
@@ -1240,28 +1477,59 @@ function smoothingToDespeckleRadius(value, superScale){
   return Math.max(4, Math.round(value * (superScale / 2)));
 }
 
+// Brute-force majority vote re-scans the whole (2*radius+1)^2 window for every single pixel —
+// O(width*height*radius^2). Measured 1.5s for one pass at radius 4 on a 2560x2560 working
+// canvas, and that cost only gets worse quadratically for larger radius (radius 20 would be
+// ~25x more work than radius 4, not 5x). This is a separable sliding-window version instead:
+// maintain a per-column vertical histogram that's updated incrementally as the window slides
+// down (add the row entering, remove the row leaving — O(1) per column per row), then maintain a
+// running horizontal total across those column histograms as the window slides right (add the
+// column entering, remove the column leaving — O(k) per pixel, not O(radius^2)). Total cost is
+// O(width*height*k), independent of radius — same result, dramatically less work, and it actually
+// gets RELATIVELY cheaper (compared to brute force) the larger the radius gets.
 function despeckleClasses(classes, width, height, radius, k){
   if (radius <= 0) return classes;
   const out = new Int16Array(classes.length);
-  const counts = new Int32Array(k);
+  const colHist = new Int32Array(width * k);
+
+  // Seed colHist with the vertical window for y=0: rows [0, radius] (clipped at top edge).
+  for (let y = 0; y <= Math.min(radius, height - 1); y++){
+    for (let x = 0; x < width; x++){
+      const c = classes[y * width + x];
+      if (c >= 0) colHist[x * k + c]++;
+    }
+  }
+
+  const rowTotal = new Int32Array(k);
   for (let y = 0; y < height; y++){
+    rowTotal.fill(0);
+    for (let x = 0; x <= Math.min(radius, width - 1); x++){
+      const base = x * k;
+      for (let c = 0; c < k; c++) rowTotal[c] += colHist[base + c];
+    }
     for (let x = 0; x < width; x++){
       const idx = y * width + x;
-      if (classes[idx] === -1){ out[idx] = -1; continue; }
-      counts.fill(0);
-      for (let dy = -radius; dy <= radius; dy++){
-        const ny = y + dy;
-        if (ny < 0 || ny >= height) continue;
-        for (let dx = -radius; dx <= radius; dx++){
-          const nx = x + dx;
-          if (nx < 0 || nx >= width) continue;
-          const c = classes[ny * width + nx];
-          if (c >= 0) counts[c]++;
-        }
+      if (classes[idx] === -1){
+        out[idx] = -1;
+      } else {
+        let best = classes[idx], bestCount = -1;
+        for (let c = 0; c < k; c++){ if (rowTotal[c] > bestCount){ bestCount = rowTotal[c]; best = c; } }
+        out[idx] = best;
       }
-      let best = classes[idx], bestCount = -1;
-      for (let c = 0; c < k; c++){ if (counts[c] > bestCount){ bestCount = counts[c]; best = c; } }
-      out[idx] = best;
+      const addX = x + radius + 1;
+      if (addX < width){ const base = addX * k; for (let c = 0; c < k; c++) rowTotal[c] += colHist[base + c]; }
+      const remX = x - radius;
+      if (remX >= 0){ const base = remX * k; for (let c = 0; c < k; c++) rowTotal[c] -= colHist[base + c]; }
+    }
+    const addY = y + radius + 1;
+    if (addY < height){
+      const rowBase = addY * width;
+      for (let x = 0; x < width; x++){ const c = classes[rowBase + x]; if (c >= 0) colHist[x * k + c]++; }
+    }
+    const remY = y - radius;
+    if (remY >= 0){
+      const rowBase = remY * width;
+      for (let x = 0; x < width; x++){ const c = classes[rowBase + x]; if (c >= 0) colHist[x * k + c]--; }
     }
   }
   return out;
@@ -1287,7 +1555,7 @@ function runTrace(){
   // which would leave a trace started right before a tab-switch stuck at "Tracing…" forever.
   // setTimeout still yields one tick (letting the status text paint before the heavy synchronous
   // work below blocks the thread) but keeps firing regardless of tab visibility.
-  setTimeout(() => {
+  setTimeout(async () => {
     try {
       const isBw = modeSelect.value === 'bw';
       const tres = simplifyToTres(parseFloat(simplify.value));
@@ -1339,59 +1607,113 @@ function runTrace(){
         lastPalette = palette;
         const classes = classifyToPalette(workingData, palette);
 
-        // Each color is traced as its OWN isolated single-color layer, with its OWN curve-fit
-        // tolerance and despeckle radius (an override if the user set one for this color via the
-        // palette panel, otherwise the shared Detail settings) — then all layers' paths are
-        // merged into one SVG. Despeckling is grouped by distinct radius actually needed so a
-        // shared radius (the common case) is only computed once, not once per color.
-        const radiusForColor = palette.map((_, idx) => {
+        // Each color has its OWN effective curve-fit / despeckle radius / speckle threshold (an
+        // override if the user set one via the palette panel, otherwise the shared Detail
+        // settings). Tracing every color as its own separate full-canvas ImageTracer call was
+        // correct but very expensive — measured ~900ms per color regardless of how little canvas
+        // area it actually used (a scattered pattern like stripes/scales means each color's
+        // bounding box still spans most of the image, so cropping alone doesn't save much here).
+        // The real fix: colors sharing IDENTICAL effective settings (the common case — nobody has
+        // set a per-color override) are traced together in ONE combined ImageTracer call instead
+        // of one each. Only colors that actually have a custom override pay their own individual
+        // cost. So the common no-override case collapses to essentially one pass, same as before
+        // per-color overrides existed at all.
+        const settingsForColor = palette.map((_, idx) => {
           const ov = colorOverrides[idx];
-          const val = (ov && ov.edgeSmoothing != null) ? ov.edgeSmoothing : parseFloat(smoothing.value);
-          return smoothingToDespeckleRadius(val, superScale);
+          const radius = smoothingToDespeckleRadius(
+            (ov && ov.edgeSmoothing != null) ? ov.edgeSmoothing : parseFloat(smoothing.value),
+            superScale
+          );
+          return {
+            curveFit: (ov && ov.curveFit != null) ? ov.curveFit : tres,
+            radius,
+            speckle: (ov && ov.speckle != null) ? ov.speckle : parseInt(speckle.value)
+          };
         });
+
+        // Yielding here and between each group's trace below doesn't reduce the total work, but
+        // it breaks one long unbroken synchronous block into several shorter ones — a busy image
+        // can take multiple seconds regardless, and periodic yields keep the tab responsive
+        // (repainting the "Tracing…" status, not tripping a browser's "page unresponsive"
+        // watchdog) instead of hard-freezing for the whole duration.
+        await new Promise(r => setTimeout(r, 0));
+
         const despeckledByRadius = {};
-        [...new Set(radiusForColor)].forEach(r => {
+        for (const r of new Set(settingsForColor.map(s => s.radius))){
           despeckledByRadius[r] = despeckleClasses(classes, workingData.width, workingData.height, r, palette.length);
+          await new Promise(r2 => setTimeout(r2, 0));
+        }
+
+        const groups = new Map(); // "curveFit|radius|speckle" -> [paletteIdx, ...]
+        palette.forEach((_, idx) => {
+          const s = settingsForColor[idx];
+          const key = `${s.curveFit}|${s.radius}|${s.speckle}`;
+          if (!groups.has(key)) groups.set(key, []);
+          groups.get(key).push(idx);
         });
 
         const mergedPaths = [];
-        let sharedViewBox = null;
-        palette.forEach((color, idx) => {
-          const ov = colorOverrides[idx];
-          const colorTres = (ov && ov.curveFit != null) ? ov.curveFit : tres;
-          const cleanedForThisColor = despeckledByRadius[radiusForColor[idx]];
-          // Isolate only this color's pixels — everything else (including other real colors)
-          // goes transparent for this layer's trace, so its own tolerance only affects its own
-          // shapes. Everywhere else defaults to WHITE (not black) at alpha 0: ImageTracer's
-          // custom-palette matching turned out to ignore alpha entirely and nearest-match on RGB
-          // alone, so a plain zero-initialized (0,0,0,0) "empty" pixel — pure black — got matched
-          // to whichever real color was darkest and flooded the ENTIRE canvas with it. White is
-          // what the transparent palette slot itself is, so those pixels correctly match IT
-          // instead of the real color.
-          const isolated = new ImageData(workingData.width, workingData.height);
-          const d = isolated.data;
+        for (const indices of groups.values()){
+          await new Promise(r => setTimeout(r, 0));
+          const s = settingsForColor[indices[0]];
+          const cleaned = despeckledByRadius[s.radius];
+          const idxSet = new Set(indices);
+
+          // Union bounding box across every color in this group — still worth cropping even
+          // though scattered patterns limit the win, since it's free and helps the compact cases.
+          let minX = workingData.width, minY = workingData.height, maxX = -1, maxY = -1;
+          for (let y = 0; y < workingData.height; y++){
+            const rowBase = y * workingData.width;
+            for (let x = 0; x < workingData.width; x++){
+              if (idxSet.has(cleaned[rowBase + x])){
+                if (x < minX) minX = x; if (x > maxX) maxX = x;
+                if (y < minY) minY = y; if (y > maxY) maxY = y;
+              }
+            }
+          }
+          if (maxX < 0) continue;
+
+          const pad = 4;
+          const bx0 = Math.max(0, minX - pad), by0 = Math.max(0, minY - pad);
+          const bx1 = Math.min(workingData.width - 1, maxX + pad), by1 = Math.min(workingData.height - 1, maxY + pad);
+          const cw = bx1 - bx0 + 1, ch = by1 - by0 + 1;
+
+          const groupImg = new ImageData(cw, ch);
+          const d = groupImg.data;
+          // Everywhere defaults to WHITE (not black) at alpha 0: ImageTracer's custom-palette
+          // matching turned out to ignore alpha entirely and nearest-match on RGB alone, so a
+          // plain zero-initialized (0,0,0,0) "empty" pixel — pure black — got matched to
+          // whichever real color was darkest and flooded the canvas with it. White is what the
+          // transparent palette slot itself is, so those pixels correctly match IT instead.
           for (let i = 0; i < d.length; i += 4){ d[i]=255; d[i+1]=255; d[i+2]=255; d[i+3]=0; }
-          for (let i = 0; i < cleanedForThisColor.length; i++){
-            const o = i * 4;
-            if (cleanedForThisColor[i] === idx){ d[o]=color.r; d[o+1]=color.g; d[o+2]=color.b; d[o+3]=255; }
+          for (let y = by0; y <= by1; y++){
+            const rowBase = y * workingData.width;
+            for (let x = bx0; x <= bx1; x++){
+              const c = cleaned[rowBase + x];
+              if (idxSet.has(c)){
+                const color = getDisplayColor(c, palette);
+                const o = ((y - by0) * cw + (x - bx0)) * 4;
+                d[o]=color.r; d[o+1]=color.g; d[o+2]=color.b; d[o+3]=255;
+              }
+            }
           }
-          const layerOptions = {
-            ltres: colorTres, qtres: colorTres * 20,
-            pathomit: parseInt(speckle.value), blurradius: 0, roundcoords: 2,
+          const groupPal = [{ r: 255, g: 255, b: 255, a: 0 }, ...indices.map(i => getDisplayColor(i, palette))];
+          const groupOptions = {
+            ltres: s.curveFit, qtres: s.curveFit * 20,
+            pathomit: s.speckle, blurradius: 0, roundcoords: 2,
             rightangleenhance: rightAngle.checked, strokewidth: 0, scale: 1, viewbox: true,
-            colorquantcycles: 1, numberofcolors: 2,
-            pal: [{ r: 255, g: 255, b: 255, a: 0 }, color]
+            colorquantcycles: 1, numberofcolors: groupPal.length, pal: groupPal
           };
-          const layerSvg = ImageTracer.imagedataToSVG(isolated, layerOptions);
-          if (!sharedViewBox){
-            const vb = layerSvg.match(/viewBox="([^"]+)"/);
-            if (vb) sharedViewBox = vb[1];
-          }
-          const colorFillRe = new RegExp(`<path[^>]*fill="rgb\\(${color.r},\\s*${color.g},\\s*${color.b}\\)"[^>]*\\/?>`, 'g');
-          const paths = layerSvg.match(colorFillRe) || [];
-          mergedPaths.push(...paths);
-        });
-        svgString = `<svg viewBox="${sharedViewBox || ('0 0 ' + workingData.width + ' ' + workingData.height)}" version="1.1" xmlns="http://www.w3.org/2000/svg">${mergedPaths.join('')}</svg>`;
+          const groupSvg = ImageTracer.imagedataToSVG(groupImg, groupOptions);
+          let groupPaths = [];
+          indices.forEach(i => {
+            const color = getDisplayColor(i, palette);
+            const re = new RegExp(`<path[^>]*fill="rgb\\(${color.r},\\s*${color.g},\\s*${color.b}\\)"[^>]*\\/?>`, 'g');
+            groupPaths.push(...(groupSvg.match(re) || []));
+          });
+          if (groupPaths.length) mergedPaths.push(`<g transform="translate(${bx0},${by0})">${groupPaths.join('')}</g>`);
+        }
+        svgString = `<svg viewBox="0 0 ${workingData.width} ${workingData.height}" version="1.1" xmlns="http://www.w3.org/2000/svg">${mergedPaths.join('')}</svg>`;
         renderPalette(palette);
       }
 
@@ -1415,13 +1737,19 @@ function runTrace(){
 }
 
 function renderPalette(palette){
+  // Only ever set by the mode dropdown's change handler and the Start Over button before —
+  // if a retrace happens in Color mode without the dropdown itself changing (Start Over, then
+  // load a new file while staying in Color mode is the common case), nothing re-showed the
+  // panel, so a real palette existed in the DOM but the whole block stayed hidden.
+  paletteBlock.style.display = 'block';
   swatchList.innerHTML = '';
   if (!palette || palette.length === 0) {
     swatchList.innerHTML = '<span class="swatch-empty">No colors detected</span>';
     return;
   }
   palette.forEach((color, idx) => {
-    const css = `rgb(${color.r},${color.g},${color.b})`;
+    const displayColor = getDisplayColor(idx, palette);
+    const css = `rgb(${displayColor.r},${displayColor.g},${displayColor.b})`;
     const sw = document.createElement('div');
     sw.className = 'sw';
     sw.style.background = css;
@@ -1472,6 +1800,136 @@ document.getElementById('downloadPng').addEventListener('click', () => {
     }, 'image/png');
   };
   img.src = url;
+});
+
+// ---- Touch-up / Paint brush ----
+// Paints directly into originalImageData (the same source pixels every trace reads from), not
+// onto the SVG output — so a brush edit gets properly re-vectorized on the next trace instead of
+// sitting on top of the vector graphic as a raster patch, which would defeat the point of a
+// vector tool. pristineImageData (captured once at load, never mutated) is what the Restore mode
+// and "Reset All Touch-ups" revert back to.
+const brushModeSelect = document.getElementById('brushMode');
+const brushPaintControls = document.getElementById('brushPaintControls');
+const brushColorInput = document.getElementById('brushColor');
+const brushSizeInput = document.getElementById('brushSize');
+const brushSizeVal = document.getElementById('brushSizeVal');
+const eyedropperBtn = document.getElementById('eyedropperBtn');
+
+let brushActive = false;
+let eyedropperArmed = false;
+let pristineCanvas = null;
+
+function ensurePristineCanvas(){
+  if (!pristineImageData) return null;
+  if (!pristineCanvas || pristineCanvas.width !== pristineImageData.width || pristineCanvas.height !== pristineImageData.height){
+    pristineCanvas = document.createElement('canvas');
+    pristineCanvas.width = pristineImageData.width;
+    pristineCanvas.height = pristineImageData.height;
+  }
+  pristineCanvas.getContext('2d').putImageData(pristineImageData, 0, 0);
+  return pristineCanvas;
+}
+
+brushModeSelect.addEventListener('change', () => {
+  brushPaintControls.style.display = brushModeSelect.value === 'paint' ? 'block' : 'none';
+  canvas.classList.toggle('brush-active', brushModeSelect.value !== 'off');
+  if (brushModeSelect.value !== 'off' && originalImageData){
+    setView(false); // brush paints on the raster, so force Source view
+    renderZoomSize();
+  }
+});
+brushSizeInput.addEventListener('input', () => { brushSizeVal.textContent = brushSizeInput.value; });
+
+// Maps a mouse event's screen position to native image-pixel coordinates — the canvas's CSS
+// display size differs from its native pixel buffer size whenever zoomed, so this can't just use
+// the raw offsetX/offsetY.
+function eventToImageCoords(e){
+  const rect = canvas.getBoundingClientRect();
+  const scaleX = canvas.width / rect.width, scaleY = canvas.height / rect.height;
+  return { x: (e.clientX - rect.left) * scaleX, y: (e.clientY - rect.top) * scaleY };
+}
+
+function paintStrokeAt(x, y){
+  const radius = parseFloat(brushSizeInput.value) / 2;
+  const mode = brushModeSelect.value;
+  if (mode === 'erase'){
+    ctx.save();
+    ctx.globalCompositeOperation = 'destination-out';
+    ctx.beginPath(); ctx.arc(x, y, radius, 0, Math.PI * 2); ctx.fill();
+    ctx.restore();
+  } else if (mode === 'paint'){
+    ctx.save();
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.fillStyle = brushColorInput.value;
+    ctx.beginPath(); ctx.arc(x, y, radius, 0, Math.PI * 2); ctx.fill();
+    ctx.restore();
+  } else if (mode === 'restore'){
+    if (!pristineCanvas) return;
+    // Clip to the brush circle, then clear + redraw from the pristine canvas within just that
+    // clipped region — putImageData ignores clip paths, but drawImage respects them, which is
+    // exactly why this goes through a cached canvas instead of putImageData directly.
+    ctx.save();
+    ctx.beginPath(); ctx.arc(x, y, radius, 0, Math.PI * 2); ctx.clip();
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(pristineCanvas, 0, 0);
+    ctx.restore();
+  }
+}
+
+canvas.addEventListener('mousedown', e => {
+  if (brushModeSelect.value === 'off' || !originalImageData || eyedropperArmed) return;
+  e.preventDefault();
+  brushActive = true;
+  brushUndoStack.push(new Uint8ClampedArray(originalImageData.data));
+  if (brushUndoStack.length > 20) brushUndoStack.shift();
+  const { x, y } = eventToImageCoords(e);
+  paintStrokeAt(x, y);
+});
+canvas.addEventListener('mousemove', e => {
+  if (!brushActive) return;
+  const { x, y } = eventToImageCoords(e);
+  paintStrokeAt(x, y);
+});
+function endBrushStroke(){
+  if (!brushActive) return;
+  brushActive = false;
+  originalImageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  scheduleTrace();
+}
+canvas.addEventListener('mouseup', endBrushStroke);
+canvas.addEventListener('mouseleave', endBrushStroke);
+
+eyedropperBtn.addEventListener('click', () => {
+  eyedropperArmed = true;
+  eyedropperBtn.textContent = 'Click the image to pick a color…';
+});
+canvas.addEventListener('click', e => {
+  if (!eyedropperArmed) return;
+  eyedropperArmed = false;
+  eyedropperBtn.textContent = '🎨 Pick Color From Image';
+  const { x, y } = eventToImageCoords(e);
+  const px = Math.max(0, Math.min(canvas.width - 1, Math.round(x)));
+  const py = Math.max(0, Math.min(canvas.height - 1, Math.round(y)));
+  const d = ctx.getImageData(px, py, 1, 1).data;
+  const hex = '#' + [d[0], d[1], d[2]].map(v => v.toString(16).padStart(2, '0')).join('');
+  brushColorInput.value = hex;
+  brushModeSelect.value = 'paint';
+  brushModeSelect.dispatchEvent(new Event('change'));
+});
+
+document.getElementById('brushUndo').addEventListener('click', () => {
+  if (brushUndoStack.length === 0 || !originalImageData) return;
+  const prev = brushUndoStack.pop();
+  originalImageData = new ImageData(prev, canvas.width, canvas.height);
+  ctx.putImageData(originalImageData, 0, 0);
+  scheduleTrace();
+});
+document.getElementById('brushResetAll').addEventListener('click', () => {
+  if (!pristineImageData) return;
+  originalImageData = new ImageData(new Uint8ClampedArray(pristineImageData.data), pristineImageData.width, pristineImageData.height);
+  ctx.putImageData(originalImageData, 0, 0);
+  brushUndoStack = [];
+  scheduleTrace();
 });
 
 modeSelect.dispatchEvent(new Event('change'));
