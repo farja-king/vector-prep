@@ -1,0 +1,1050 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Vector Prep — Image to SVG Vectorizer | Crystal Groupz</title>
+<meta name="description" content="Free browser-based image vectorizer: trace logos, line art and photos into clean, scalable SVG for cutting, engraving and print. All processing runs locally in your browser.">
+<meta name="keywords" content="image to SVG, vectorize image, logo tracing, SVG converter, vinyl cutting artwork, laser engraving vector, raster to vector">
+<meta name="author" content="Crystal Groupz">
+<meta name="robots" content="index, follow">
+
+<meta property="og:type" content="website">
+<meta property="og:title" content="Vector Prep — Image to SVG Vectorizer">
+<meta property="og:description" content="Free browser-based image vectorizer: trace logos, line art and photos into clean, scalable SVG for cutting, engraving and print.">
+<meta property="og:site_name" content="Vector Prep by Crystal Groupz">
+
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="Vector Prep — Image to SVG Vectorizer">
+<meta name="twitter:description" content="Free browser-based image vectorizer: trace logos, line art and photos into clean, scalable SVG for cutting, engraving and print.">
+
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='8' fill='%23EDE8DF'/%3E%3Cpath d='M12 44 C20 14, 36 14, 52 30' fill='none' stroke='%232F4858' stroke-width='4'/%3E%3Ccircle cx='12' cy='44' r='4' fill='%23B23A26'/%3E%3Ccircle cx='52' cy='30' r='4' fill='%23B23A26'/%3E%3C/svg%3E">
+
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "SoftwareApplication",
+  "name": "Vector Prep",
+  "applicationCategory": "DesignApplication",
+  "operatingSystem": "Any (runs in web browser)",
+  "description": "Browser-based image vectorizer for tracing logos, line art and photos into clean, scalable SVG. Built for print shops, sign makers and hobbyists preparing cut-ready or engrave-ready artwork.",
+  "offers": {
+    "@type": "Offer",
+    "price": "0",
+    "priceCurrency": "GBP"
+  },
+  "publisher": {
+    "@type": "Organization",
+    "name": "Crystal Groupz",
+    "email": "hello@crystalgroupz.co.uk"
+  }
+}
+</script>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Oswald:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap');
+
+  :root{
+    --canvas:#EDE8DF;
+    --ink:#1B1B18;
+    --thread-red:#B23A26;
+    --thread-blue:#2F4858;
+    --stitch-gold:#B8935F;
+    --paper-line:#D8D0C0;
+    --white:#FBFAF6;
+  }
+
+  *{box-sizing:border-box;}
+  body{
+    margin:0;
+    background:var(--canvas);
+    font-family:'IBM Plex Sans',sans-serif;
+    color:var(--ink);
+    background-image:radial-gradient(var(--paper-line) 1px, transparent 1px);
+    background-size:14px 14px;
+  }
+
+  .wrap{max-width:960px;margin:0 auto;padding:36px 20px 60px;}
+
+  header{
+    display:flex;
+    align-items:baseline;
+    justify-content:space-between;
+    border-bottom:3px solid var(--ink);
+    padding-bottom:14px;
+    margin-bottom:8px;
+  }
+  h1{
+    font-family:'Oswald',sans-serif;
+    font-weight:700;
+    text-transform:uppercase;
+    letter-spacing:0.02em;
+    font-size:28px;
+    margin:0;
+  }
+  h1 span{color:var(--thread-red);}
+  .tag{
+    font-family:'IBM Plex Mono',monospace;
+    font-size:12px;
+    color:var(--thread-blue);
+    text-transform:uppercase;
+    letter-spacing:0.08em;
+  }
+  .sub{
+    font-size:14px;
+    color:#5c5a52;
+    margin:10px 0 28px;
+    max-width:520px;
+    line-height:1.5;
+  }
+
+  .drop{
+    border:2px dashed var(--ink);
+    background:var(--white);
+    border-radius:2px;
+    padding:36px 20px;
+    text-align:center;
+    cursor:pointer;
+    transition:border-color .15s, background .15s;
+  }
+  .drop.drag{border-color:var(--thread-red); background:#fff;}
+  .drop p{margin:0; font-size:15px;}
+  .drop .hint{font-family:'IBM Plex Mono',monospace; font-size:11px; color:#8a8578; margin-top:8px;}
+  input[type=file]{display:none;}
+
+  .stage{display:none; margin-top:28px;}
+  .stage.on{display:grid; grid-template-columns:1fr 280px; gap:24px; align-items:start;}
+  @media (max-width:680px){.stage.on{grid-template-columns:1fr;}}
+
+  .canvas-container{position:sticky; top:20px; min-width:0;}
+
+  .canvas-panel{
+    background:var(--white);
+    border:1px solid var(--ink);
+    padding:14px;
+    position:relative;
+  }
+  .canvas-panel .label{
+    font-family:'IBM Plex Mono',monospace;
+    font-size:11px;
+    text-transform:uppercase;
+    letter-spacing:.06em;
+    color:#8a8578;
+    margin-bottom:10px;
+    display:flex;
+    justify-content:space-between;
+    align-items:center;
+  }
+
+  .view-toggle{display:flex; gap:6px;}
+  .view-toggle button{
+    font-family:'IBM Plex Mono',monospace;
+    font-size:11px;
+    text-transform:uppercase;
+    letter-spacing:.04em;
+    padding:4px 9px;
+    border:1px solid var(--ink);
+    background:transparent;
+    color:var(--ink);
+    cursor:pointer;
+  }
+  .view-toggle button.active{background:var(--ink); color:var(--white);}
+
+  .zoom-control{display:flex; gap:8px; align-items:center; font-family:'IBM Plex Sans',sans-serif; text-transform:none; letter-spacing:normal;}
+  .zoom-control label{font-size:11px; color:#8a8578; margin:0;}
+  .zoom-control input[type=range]{width:80px; margin:0;}
+  .zoom-control .zoom-val{font-size:11px; font-family:'IBM Plex Mono',monospace; font-weight:bold; width:35px; text-align:right;}
+
+  /* flex + margin:auto on the canvas/svg (below) centers it whenever it's smaller than this
+     box; align-items:flex-start (not center) is required so overflow:auto can actually scroll
+     to zoomed-in content instead of clipping it against a centered flex line — see Print Prep
+     for the same pattern. */
+  .preview-holder{
+    position:relative;
+    width:100%;
+    margin:0 auto;
+    overflow:auto;
+    height:60vh;
+    border:1px solid var(--paper-line);
+    background:var(--canvas);
+    display:flex;
+    align-items:flex-start;
+  }
+  .preview-holder.checker{
+    background-image:
+      linear-gradient(45deg, #ddd 25%, transparent 25%),
+      linear-gradient(-45deg, #ddd 25%, transparent 25%),
+      linear-gradient(45deg, transparent 75%, #ddd 75%),
+      linear-gradient(-45deg, transparent 75%, #ddd 75%);
+    background-size:16px 16px;
+    background-position:0 0, 0 8px, 8px -8px, -8px 0px;
+  }
+
+  canvas{display:block; margin:auto; flex-shrink:0;}
+  #svgHolder{display:none; margin:auto; flex-shrink:0;}
+  #svgHolder svg{display:block;}
+
+  .tools{display:flex; flex-direction:column; gap:14px;}
+  .tool-block{background:var(--white); border:1px solid var(--ink); padding:14px;}
+  .tool-block h3{
+    font-family:'Oswald',sans-serif;
+    font-size:14px;
+    text-transform:uppercase;
+    letter-spacing:.04em;
+    margin:0 0 10px;
+    display:flex;
+    align-items:center;
+    gap:8px;
+  }
+  .tool-block h3 .n{font-family:'IBM Plex Mono',monospace; font-size:11px; color:var(--thread-red);}
+  .tool-block p.hint{font-size:11px;color:#8a8578;margin:4px 0 12px;line-height:1.4;}
+
+  button.action{
+    width:100%;
+    font-family:'IBM Plex Sans',sans-serif;
+    font-weight:600;
+    font-size:13px;
+    padding:9px 10px;
+    border:1px solid var(--ink);
+    background:var(--ink);
+    color:var(--white);
+    cursor:pointer;
+    transition:background .15s;
+  }
+  button.action:hover{background:var(--thread-red); border-color:var(--thread-red);}
+  button.action:active{transform:translateY(1px);}
+  button.action:disabled{cursor:wait; opacity:0.8;}
+  button.action.busy{
+    background:linear-gradient(90deg, var(--ink) 0%, var(--thread-red) 50%, var(--ink) 100%);
+    background-size:220% 100%;
+    animation:flashBtn 1.1s linear infinite;
+    border-color:var(--thread-red);
+  }
+  @keyframes flashBtn{0%{background-position:0% 0%;} 100%{background-position:-220% 0%;}}
+  button.ghost{background:transparent; color:var(--ink);}
+  button.ghost:hover{background:var(--ink); color:var(--white);}
+  .start-over-btn{
+    display:block;
+    width:100%;
+    margin-top:14px;
+    font-family:'IBM Plex Sans',sans-serif;
+    font-weight:700;
+    font-size:14px;
+    text-transform:uppercase;
+    letter-spacing:.03em;
+    padding:12px 10px;
+    border:2px solid #7A1210;
+    background:#D32F2F;
+    color:#fff;
+    cursor:pointer;
+  }
+  .start-over-btn:hover{background:#B71C1C;}
+  .start-over-btn:active{transform:translateY(1px);}
+
+  .row{display:flex; gap:8px; margin-bottom:8px; align-items:center;}
+  .row label{font-size:11px; color:#8a8578; display:block; margin-bottom:3px; font-family:'IBM Plex Mono',monospace; flex:1;}
+  .row .val{width:44px; text-align:right; font-family:'IBM Plex Mono',monospace; font-size:12px; font-weight:bold; margin-top:8px;}
+  input[type=range]{width:100%; accent-color:var(--thread-red);}
+  select{width:100%;font-family:'IBM Plex Mono',monospace;font-size:12px;padding:6px 8px;border:1px solid #c9c2b2;background:#fff;}
+
+  .slider-row{display:flex; gap:8px; align-items:flex-end; margin-bottom:8px;}
+  .slider-row .slider-col{flex:1;}
+  .slider-row .slider-col label{font-size:11px; color:#8a8578; display:block; margin-bottom:3px; font-family:'IBM Plex Mono',monospace;}
+
+  /* Custom up/down stepper rather than relying on the browser's native <input type=number>
+     spinner — that spinner is inconsistent (hidden entirely in some browsers/zoom levels,
+     squeezed invisible in a narrow box in others), so we build our own to guarantee it's
+     always there. */
+  .num-stepper{display:flex; width:82px; border:1px solid #c9c2b2; background:#fff;}
+  .num-stepper .num-input{
+    flex:1;
+    width:0;
+    min-width:0;
+    border:none;
+    background:transparent;
+    font-family:'IBM Plex Mono',monospace;
+    font-size:12px;
+    font-weight:bold;
+    text-align:right;
+    padding:5px 4px 5px 6px;
+  }
+  .num-input::-webkit-outer-spin-button,
+  .num-input::-webkit-inner-spin-button{ -webkit-appearance:none; margin:0; }
+  .num-input[type=number]{ -moz-appearance:textfield; }
+  .num-stepper .stepper-btns{display:flex; flex-direction:column; border-left:1px solid #c9c2b2;}
+  .stepper-btn{
+    border:none;
+    background:var(--white);
+    color:var(--ink);
+    cursor:pointer;
+    font-size:8px;
+    line-height:1;
+    padding:0;
+    width:17px;
+    height:12px;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+  }
+  .stepper-btn:not(:last-child){border-bottom:1px solid #c9c2b2;}
+  .stepper-btn:hover{background:var(--thread-red); color:#fff;}
+  .stepper-btn:active{background:var(--ink); color:#fff;}
+
+  .swatch-list{display:flex; flex-wrap:wrap; gap:6px;}
+  .swatch-list .sw{
+    width:26px; height:26px; border-radius:50%;
+    border:2px solid var(--ink);
+  }
+  .swatch-empty{font-size:11px; color:#8a8578; font-family:'IBM Plex Mono',monospace;}
+
+  .meta{
+    font-family:'IBM Plex Mono',monospace;
+    font-size:11px;
+    color:#8a8578;
+    margin-top:6px;
+    display:flex;
+    justify-content:space-between;
+    flex-wrap:wrap;
+    gap:4px;
+  }
+  .meta b{color:var(--ink);}
+
+  .footnote{
+    margin-top:34px;
+    font-size:12px;
+    color:#8a8578;
+    border-top:1px solid var(--paper-line);
+    padding-top:14px;
+    line-height:1.6;
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <h1>Vector<span>Prep</span></h1>
+    <div class="tag">Trace &amp; Export • SVG Ready</div>
+  </header>
+  <p class="sub">Trace logos, line art and photos into clean, scalable SVG paths.<br>All processing runs locally in your browser.</p>
+
+  <div class="drop" id="drop">
+    <p>Drop an image here, or click to choose</p>
+    <div class="hint">PNG · JPG · WebP — stays on this device</div>
+    <input type="file" id="file" accept="image/*">
+  </div>
+
+  <div class="stage" id="stage">
+    <div class="canvas-container">
+      <div class="canvas-panel">
+        <div class="label">
+          <span>Preview</span>
+          <div style="display:flex; gap:14px; align-items:center;">
+            <div class="zoom-control">
+              <label>Zoom (scroll to zoom on cursor):</label>
+              <input type="range" id="zoomLevel" min="1" max="500" value="100">
+              <span class="zoom-val" id="zoomVal">100%</span>
+            </div>
+            <div class="view-toggle">
+              <button type="button" id="viewSource" class="active">Source</button>
+              <button type="button" id="viewVector">Vector</button>
+            </div>
+          </div>
+        </div>
+        <div class="preview-holder" id="previewHolder">
+          <canvas id="canvas"></canvas>
+          <div id="svgHolder"></div>
+        </div>
+        <div class="meta">
+          <span>output <b id="dims">—</b></span>
+          <span id="pathCount">—</span>
+          <span id="svgSize">—</span>
+        </div>
+      </div>
+      <button class="start-over-btn" id="reset">Start Over — Erase Everything</button>
+    </div>
+
+    <div class="tools">
+      <div class="tool-block">
+        <h3><span class="n">00</span> Trace mode</h3>
+        <p class="hint">Line art / logos give the cleanest single-colour trace. Color mode posterizes photos into flat vector regions.</p>
+        <button class="action ghost" id="suggestSettings" style="margin-bottom:12px;">✨ Suggest Settings for This Image</button>
+        <div class="row" style="margin-bottom:12px;">
+          <select id="mode">
+            <option value="bw">Line Art (Black &amp; White)</option>
+            <option value="color">Color / Posterize</option>
+          </select>
+        </div>
+
+        <div id="bwControls">
+          <div class="slider-row">
+            <div class="slider-col">
+              <label>Threshold</label>
+              <input type="range" id="threshold" min="1" max="254" value="128">
+            </div>
+            <input type="number" class="num-input" id="thresholdNum" min="1" max="254" step="1" value="128">
+          </div>
+          <label style="font-size:11px; color:#8a8578; display:block; margin-top:4px;">
+            <input type="checkbox" id="invert"> Invert (trace the light areas instead)
+          </label>
+        </div>
+
+        <div id="colorControls" style="display:none;">
+          <div class="slider-row">
+            <div class="slider-col">
+              <label>Color count</label>
+              <input type="range" id="colorCount" min="2" max="32" value="8">
+            </div>
+            <input type="number" class="num-input" id="colorCountNum" min="2" max="32" step="1" value="8">
+          </div>
+        </div>
+      </div>
+
+      <div class="tool-block">
+        <h3><span class="n">01</span> Detail</h3>
+        <p class="hint">Images are automatically supersampled before tracing for smoother, more accurate curves — these controls fine-tune fidelity on top of that.</p>
+        <div class="slider-row">
+          <div class="slider-col">
+            <label>Curve smoothing (higher = smoother; very low values trace the raw pixel staircase instead of fitting a curve)</label>
+            <input type="range" id="simplify" min="0" max="4000" value="196">
+          </div>
+          <input type="number" class="num-input" id="simplifyNum" min="0.02" max="20" step="0.01" value="1.000">
+        </div>
+
+        <div class="slider-row">
+          <div class="slider-col">
+            <label>Speckle removal</label>
+            <input type="range" id="speckle" min="0" max="64" value="3">
+          </div>
+          <input type="number" class="num-input" id="speckleNum" min="0" max="64" step="1" value="3">
+        </div>
+
+        <div class="slider-row">
+          <div class="slider-col">
+            <label>Edge smoothing / blur (a blunter, coarser tool than Curve smoothing above — push that one up first for jagged edges)</label>
+            <input type="range" id="smoothing" min="0" max="20" step="0.1" value="3">
+          </div>
+          <input type="number" class="num-input" id="smoothingNum" min="0" max="20" step="0.1" value="3">
+        </div>
+
+        <label style="font-size:11px; color:#8a8578; display:block; margin-top:4px;">
+          <input type="checkbox" id="rightAngle" checked> Sharpen right-angle corners (logos/text)
+        </label>
+
+        <button class="action ghost" id="resetDetail" style="margin-top:10px;">Reset Detail to Defaults</button>
+      </div>
+
+      <div class="tool-block" id="paletteBlock" style="display:none;">
+        <h3><span class="n">02</span> Detected palette</h3>
+        <div class="swatch-list" id="swatchList"><span class="swatch-empty">Trace an image to see colors</span></div>
+      </div>
+
+      <div class="tool-block">
+        <h3><span class="n">03</span> Export</h3>
+        <button class="action" id="downloadSvg" style="margin-bottom:8px;">Download SVG</button>
+        <button class="action ghost" id="downloadPng">Download PNG Preview</button>
+        <div id="traceStatus" style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:#8a8578;margin-top:8px;min-height:14px;"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="footnote">
+    Local client sandbox • All processing in-browser.<br>
+    © 2026 Crystal Groupz. All rights reserved. — hello@crystalgroupz.co.uk
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/imagetracerjs@1.2.6/imagetracer_v1.2.6.js"></script>
+<script>
+const drop = document.getElementById('drop');
+const fileInput = document.getElementById('file');
+const stage = document.getElementById('stage');
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d', { willReadFrequently: true });
+const svgHolder = document.getElementById('svgHolder');
+const previewHolder = document.getElementById('previewHolder');
+const dimsEl = document.getElementById('dims');
+const pathCountEl = document.getElementById('pathCount');
+const svgSizeEl = document.getElementById('svgSize');
+const traceStatus = document.getElementById('traceStatus');
+const swatchList = document.getElementById('swatchList');
+const paletteBlock = document.getElementById('paletteBlock');
+
+const modeSelect = document.getElementById('mode');
+const bwControls = document.getElementById('bwControls');
+const colorControls = document.getElementById('colorControls');
+const threshold = document.getElementById('threshold');
+const thresholdNum = document.getElementById('thresholdNum');
+const invert = document.getElementById('invert');
+const colorCount = document.getElementById('colorCount');
+const colorCountNum = document.getElementById('colorCountNum');
+const smoothing = document.getElementById('smoothing');
+const smoothingNum = document.getElementById('smoothingNum');
+const simplify = document.getElementById('simplify');
+const simplifyNum = document.getElementById('simplifyNum');
+const speckle = document.getElementById('speckle');
+const speckleNum = document.getElementById('speckleNum');
+const rightAngle = document.getElementById('rightAngle');
+
+const viewSourceBtn = document.getElementById('viewSource');
+const viewVectorBtn = document.getElementById('viewVector');
+
+let originalImageData = null; // pristine pixels straight from the loaded image — every trace re-runs from this, never from a previous trace's output
+let lastSvgString = '';
+let traceTimeout = null;
+
+// Maps the 0-4000 slider to an ltres/qtres error threshold of 0.02-20 — widened again from
+// 0.02-10, since pushing curve smoothing near its ceiling keeps being exactly the right move for
+// lettering/logos (it's what actually drives curve-fitting, not the blur/speckle controls) and
+// there was still no headroom left. Slider steps scale up proportionally so per-notch sensitivity
+// stays the same as before across the low end.
+function simplifyToTres(sliderVal){
+  return 0.02 + (sliderVal / 4000) * 19.98;
+}
+function tresToSimplify(tres){
+  return Math.round(((tres - 0.02) / 19.98) * 4000);
+}
+
+function setView(showVector){
+  canvas.style.display = showVector ? 'none' : 'block';
+  svgHolder.style.display = showVector ? 'block' : 'none';
+  previewHolder.classList.toggle('checker', showVector);
+  viewSourceBtn.classList.toggle('active', !showVector);
+  viewVectorBtn.classList.toggle('active', showVector);
+}
+viewSourceBtn.addEventListener('click', () => { setView(false); renderZoomSize(); });
+viewVectorBtn.addEventListener('click', () => { setView(true); renderZoomSize(); });
+
+const canvasPanel = document.querySelector('.canvas-panel');
+const zoomLevelInput = document.getElementById('zoomLevel');
+const zoomValLabel = document.getElementById('zoomVal');
+let zoomPct = 100;
+
+// zoomPct is a percentage of the image's true native pixel width (originalImageData.width),
+// applied identically to whichever of canvas/svg is currently visible so switching views never
+// jumps the zoom level.
+function renderZoomSize(){
+  if (!originalImageData) return;
+  const wPx = (originalImageData.width * zoomPct / 100) + 'px';
+  const hPx = (originalImageData.height * zoomPct / 100) + 'px';
+  canvas.style.width = wPx;
+  canvas.style.height = hPx;
+  const svgEl = svgHolder.querySelector('svg');
+  if (svgEl) { svgEl.style.width = wPx; svgEl.style.height = hPx; }
+  zoomLevelInput.value = zoomPct;
+  zoomValLabel.textContent = Math.round(zoomPct) + '%';
+}
+
+function fitZoomToContainer(){
+  if (!originalImageData) return;
+  const containerWidth = previewHolder.clientWidth || 600;
+  const containerHeight = previewHolder.clientHeight || 600;
+  const fitPct = Math.min(100, (containerWidth / originalImageData.width) * 100, (containerHeight / originalImageData.height) * 100);
+  zoomPct = Math.max(1, Math.min(500, fitPct));
+  renderZoomSize();
+  previewHolder.scrollLeft = 0;
+  previewHolder.scrollTop = 0;
+}
+
+// Anchors zoom to the cursor using the element's actual on-screen rect, not an assumed
+// top-left-flush position. The image is centered via margin:auto whenever it's smaller than
+// the preview panel (common here — logos are far smaller than the panel, unlike Print Prep's
+// typically panel-filling artwork), so assuming position 0 == the image's left edge was wrong
+// most of the time and made the zoom anchor drift — that was the "hit and miss" targeting.
+function applyZoom(newPct, anchorClientX, anchorClientY){
+  newPct = Math.max(1, Math.min(500, newPct));
+  if (Math.abs(newPct - zoomPct) < 0.01) return;
+
+  const activeEl = svgHolder.style.display === 'block' ? (svgHolder.querySelector('svg') || svgHolder) : canvas;
+  const beforeRect = activeEl.getBoundingClientRect();
+  const fractionX = beforeRect.width ? (anchorClientX - beforeRect.left) / beforeRect.width : 0.5;
+  const fractionY = beforeRect.height ? (anchorClientY - beforeRect.top) / beforeRect.height : 0.5;
+
+  zoomPct = newPct;
+  renderZoomSize();
+
+  // getBoundingClientRect forces a synchronous layout, so the resized geometry is already
+  // correct here — no need to wait a frame (and rAF is unreliable anyway: browsers fully pause
+  // it on a backgrounded tab).
+  const afterRect = activeEl.getBoundingClientRect();
+  const pointScreenX = afterRect.left + fractionX * afterRect.width;
+  const pointScreenY = afterRect.top + fractionY * afterRect.height;
+  previewHolder.scrollLeft += pointScreenX - anchorClientX;
+  previewHolder.scrollTop += pointScreenY - anchorClientY;
+}
+
+zoomLevelInput.addEventListener('input', e => {
+  const r = previewHolder.getBoundingClientRect();
+  applyZoom(parseFloat(e.target.value), r.left + r.width / 2, r.top + r.height / 2);
+});
+
+canvasPanel.addEventListener('wheel', e => {
+  if (!stage.classList.contains('on')) return;
+  e.preventDefault();
+  e.stopPropagation();
+  const factor = e.deltaY < 0 ? 1.12 : 1 / 1.12;
+  applyZoom(zoomPct * factor, e.clientX, e.clientY);
+}, { passive: false });
+
+function loadImageFile(file){
+  const img = new Image();
+  const reader = new FileReader();
+  reader.onload = e => {
+    img.onload = () => {
+      canvas.width = img.naturalWidth;
+      canvas.height = img.naturalHeight;
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.drawImage(img, 0, 0);
+      originalImageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      stage.classList.add('on');
+      dimsEl.textContent = canvas.width + ' × ' + canvas.height;
+      setView(false);
+      fitZoomToContainer();
+      scheduleTrace(0);
+    };
+    img.src = e.target.result;
+  };
+  reader.readAsDataURL(file);
+}
+
+drop.addEventListener('click', () => fileInput.click());
+fileInput.addEventListener('change', () => { if (fileInput.files[0]) loadImageFile(fileInput.files[0]); });
+['dragenter','dragover'].forEach(evt => drop.addEventListener(evt, e => { e.preventDefault(); drop.classList.add('drag'); }));
+['dragleave','drop'].forEach(evt => drop.addEventListener(evt, e => { e.preventDefault(); drop.classList.remove('drag'); }));
+drop.addEventListener('drop', e => { if (e.dataTransfer.files[0]) loadImageFile(e.dataTransfer.files[0]); });
+
+document.getElementById('reset').addEventListener('click', () => {
+  originalImageData = null;
+  lastSvgString = '';
+  stage.classList.remove('on');
+  fileInput.value = '';
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  svgHolder.innerHTML = '';
+  swatchList.innerHTML = '<span class="swatch-empty">Trace an image to see colors</span>';
+  paletteBlock.style.display = 'none';
+});
+
+modeSelect.addEventListener('change', () => {
+  const isBw = modeSelect.value === 'bw';
+  bwControls.style.display = isBw ? 'block' : 'none';
+  colorControls.style.display = isBw ? 'none' : 'block';
+  paletteBlock.style.display = isBw ? 'none' : 'block';
+  scheduleTrace();
+});
+
+// Keeps a range slider and a number input in sync both ways, like Print Prep's slider+number
+// pairs — drag for coarse changes, type or click the up/down arrows for precise ones. toDisplay/
+// fromDisplay let a pair use a transformed value in the number box (e.g. simplify's slider is an
+// internal 0-400 index but the number box shows the actual 0.02-2.02 fidelity value it maps to).
+function bindSliderNumberPair(slider, num, toDisplay, fromDisplay){
+  toDisplay = toDisplay || (v => v);
+  fromDisplay = fromDisplay || (v => v);
+  const syncFromSlider = () => { num.value = toDisplay(parseFloat(slider.value)); };
+  // `commit` is only true on blur/Enter. While the user is still typing (the 'input' event on
+  // every keystroke), we must NOT rewrite num.value — doing so on every keystroke was stripping
+  // the decimal point right after typing it (parseFloat("3.") is 3, so writing that back turned
+  // "3." into "3" mid-type), making it effectively impossible to type a value like 3.0 by hand.
+  // The slider still updates live for a real-time preview; only the visible text field waits.
+  const syncFromNum = commit => {
+    let v = parseFloat(num.value);
+    if (isNaN(v)) return;
+    v = Math.max(parseFloat(num.min), Math.min(parseFloat(num.max), v));
+    if (commit) num.value = v;
+    slider.value = fromDisplay(v);
+  };
+  slider.addEventListener('input', () => { syncFromSlider(); scheduleTrace(); });
+  num.addEventListener('input', () => { syncFromNum(false); scheduleTrace(); });
+  num.addEventListener('change', () => syncFromNum(true));
+  num.addEventListener('keydown', e => { if (e.key === 'Enter') num.blur(); });
+  syncFromSlider();
+}
+
+bindSliderNumberPair(threshold, thresholdNum);
+bindSliderNumberPair(colorCount, colorCountNum);
+bindSliderNumberPair(speckle, speckleNum);
+bindSliderNumberPair(smoothing, smoothingNum, v => v.toFixed(1));
+bindSliderNumberPair(
+  simplify, simplifyNum,
+  sliderVal => simplifyToTres(sliderVal).toFixed(2),
+  displayVal => tresToSimplify(displayVal)
+);
+
+invert.addEventListener('change', () => scheduleTrace());
+rightAngle.addEventListener('change', () => scheduleTrace());
+
+const DETAIL_DEFAULTS = { simplifySlider: 196, speckle: 3, smoothing: 3, rightAngle: true };
+document.getElementById('resetDetail').addEventListener('click', () => {
+  simplify.value = DETAIL_DEFAULTS.simplifySlider;
+  simplify.dispatchEvent(new Event('input'));
+  speckle.value = DETAIL_DEFAULTS.speckle;
+  speckle.dispatchEvent(new Event('input'));
+  smoothing.value = DETAIL_DEFAULTS.smoothing;
+  smoothing.dispatchEvent(new Event('input'));
+  rightAngle.checked = DETAIL_DEFAULTS.rightAngle;
+  rightAngle.dispatchEvent(new Event('change'));
+});
+
+// Otsu's method: finds the luminance threshold that best splits a bimodal histogram (e.g. dark
+// ink vs light paper) by maximizing the variance BETWEEN the two resulting groups. Standard,
+// cheap (single pass over a 256-bucket histogram) and far more reliable than a flat guess of 128
+// for a real scanned/exported logo, whose ink/paper split rarely sits at exactly the middle.
+function otsuThreshold(hist, total){
+  let sum = 0;
+  for (let i = 0; i < 256; i++) sum += i * hist[i];
+  let sumB = 0, wB = 0, best = 128, varMax = -1;
+  for (let t = 0; t < 256; t++){
+    wB += hist[t];
+    if (wB === 0) continue;
+    const wF = total - wB;
+    if (wF === 0) break;
+    sumB += t * hist[t];
+    const mB = sumB / wB;
+    const mF = (sum - sumB) / wF;
+    const varBetween = wB * wF * (mB - mF) * (mB - mF);
+    if (varBetween > varMax){ varMax = varBetween; best = t; }
+  }
+  return best;
+}
+
+// Samples the source once to gather everything the suggestions below need: a luminance
+// histogram (for Otsu), how much of the image is genuinely mid-tone/anti-aliased rather than
+// flat ink-or-paper (to judge how much edge-blur actually helps vs just muddies things), how
+// bright the four corners are (a cheap proxy for "is the background light or dark", used to
+// guess whether Invert should be on), and a rough distinct-color count (for Color mode).
+function analyzeImage(imgData){
+  const { width, height, data } = imgData;
+  const hist = new Array(256).fill(0);
+  const step = Math.max(1, Math.round(Math.sqrt((width * height) / 250000)));
+  let sampled = 0, midtoneCount = 0;
+  const colorBuckets = new Set();
+  for (let y = 0; y < height; y += step){
+    for (let x = 0; x < width; x += step){
+      const i = (y * width + x) * 4;
+      if (data[i + 3] < 10) continue;
+      const lum = Math.round(0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2]);
+      hist[lum]++;
+      sampled++;
+      if (lum > 40 && lum < 215) midtoneCount++;
+      // Quantize to a coarse 4-bit-per-channel bucket — enough to distinguish genuinely
+      // different colors from anti-aliasing noise between two colors, without exploding into
+      // thousands of near-identical buckets from a photo's natural gradients.
+      colorBuckets.add(((data[i] >> 4) << 8) | ((data[i + 1] >> 4) << 4) | (data[i + 2] >> 4));
+    }
+  }
+  const corners = [
+    [0, 0], [width - 1, 0], [0, height - 1], [width - 1, height - 1]
+  ].map(([x, y]) => {
+    const i = (y * width + x) * 4;
+    return 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
+  });
+  const cornerBrightness = corners.reduce((a, b) => a + b, 0) / corners.length;
+
+  return {
+    otsu: sampled ? otsuThreshold(hist, sampled) : 128,
+    midtoneRatio: sampled ? midtoneCount / sampled : 0,
+    cornerBrightness,
+    distinctColors: colorBuckets.size,
+    longSide: Math.max(width, height),
+    totalPixels: width * height
+  };
+}
+
+document.getElementById('suggestSettings').addEventListener('click', () => {
+  if (!originalImageData) return;
+  const a = analyzeImage(originalImageData);
+
+  if (modeSelect.value === 'bw') {
+    threshold.value = a.otsu;
+    threshold.dispatchEvent(new Event('input'));
+    // A dark background (dark corners) means the light foreground is what we actually want
+    // traced, which is what Invert is for — a flat default guess can't know this per image.
+    invert.checked = a.cornerBrightness < 110;
+    invert.dispatchEvent(new Event('change'));
+  } else {
+    // Distinct-color count, clamped to the slider's range. Photos naturally blow past the
+    // slider's max (thousands of gradient buckets) and just clamp to 32, which is exactly what
+    // posterization needs anyway — no extra scaling required there. The case that actually needs
+    // an accurate count is a flat-color graphic with genuinely few true colors, where the raw
+    // count IS the right answer (a 4-color logo needs ~4 palette slots, not ~1).
+    colorCount.value = Math.max(2, Math.min(32, a.distinctColors));
+    colorCount.dispatchEvent(new Event('input'));
+  }
+
+  // Curve smoothing: a big, simple graphic can tolerate (and looks better with) a looser curve
+  // fit; a small or fine-detailed one needs a tighter fit or real detail gets smoothed away.
+  const sizeFactor = Math.min(1, Math.max(0, (a.longSide - 150) / 1850));
+  simplify.value = tresToSimplify(0.5 + sizeFactor * 5.5);
+  simplify.dispatchEvent(new Event('input'));
+
+  // Speckle removal: a sensible omit-threshold scales with total pixel area, not a flat count —
+  // "3" might be fine for a small icon and pointlessly tiny for a large scan.
+  speckle.value = Math.max(1, Math.min(20, Math.round(a.totalPixels / 90000)));
+  speckle.dispatchEvent(new Event('input'));
+
+  // Edge smoothing stays deliberately conservative — it's the blunt tool that chamfers real
+  // corners (confirmed earlier), so only nudge it up when the source itself is genuinely soft/
+  // anti-aliased (high midtone ratio), never as the default way to fix jagged curves.
+  smoothing.value = Math.min(2, +(a.midtoneRatio * 8).toFixed(1));
+  smoothing.dispatchEvent(new Event('input'));
+
+  rightAngle.checked = true;
+  rightAngle.dispatchEvent(new Event('change'));
+});
+
+// Wraps every number input with custom up/down stepper buttons — moving the input into a new
+// wrapper preserves its existing listeners, so this can run after the binding above with no
+// extra wiring needed beyond the buttons themselves.
+document.querySelectorAll('.num-input').forEach(input => {
+  const wrap = document.createElement('div');
+  wrap.className = 'num-stepper';
+  input.parentNode.insertBefore(wrap, input);
+  wrap.appendChild(input);
+
+  const btns = document.createElement('div');
+  btns.className = 'stepper-btns';
+  const upBtn = document.createElement('button');
+  upBtn.type = 'button';
+  upBtn.className = 'stepper-btn';
+  upBtn.textContent = '▲';
+  upBtn.setAttribute('aria-label', 'Increase');
+  const downBtn = document.createElement('button');
+  downBtn.type = 'button';
+  downBtn.className = 'stepper-btn';
+  downBtn.textContent = '▼';
+  downBtn.setAttribute('aria-label', 'Decrease');
+  btns.appendChild(upBtn);
+  btns.appendChild(downBtn);
+  wrap.appendChild(btns);
+
+  const step = parseFloat(input.step) || 1;
+  const decimals = (input.step && input.step.includes('.')) ? input.step.split('.')[1].length : 0;
+  const nudge = dir => {
+    let v = (parseFloat(input.value) || 0) + dir * step;
+    if (input.min !== '') v = Math.max(parseFloat(input.min), v);
+    if (input.max !== '') v = Math.min(parseFloat(input.max), v);
+    input.value = decimals ? v.toFixed(decimals) : v;
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  };
+  upBtn.addEventListener('click', () => nudge(1));
+  downBtn.addEventListener('click', () => nudge(-1));
+});
+
+function scheduleTrace(delay){
+  if (!originalImageData) return;
+  clearTimeout(traceTimeout);
+  traceTimeout = setTimeout(runTrace, delay === undefined ? 250 : delay);
+}
+
+// Builds a strict two-tone RGBA copy: opaque black where luminance crosses `threshold`,
+// fully transparent everywhere else, so ImageTracer's quantizer has an unambiguous single
+// foreground color to trace instead of guessing a split from arbitrary source colors.
+function buildBwImageData(src, thresholdValue, doInvert){
+  const w = src.width, h = src.height;
+  const out = new ImageData(w, h);
+  const s = src.data, d = out.data;
+  for (let i = 0; i < s.length; i += 4) {
+    const lum = 0.299 * s[i] + 0.587 * s[i+1] + 0.114 * s[i+2];
+    const alpha = s[i+3];
+    let isForeground = lum < thresholdValue && alpha > 10;
+    if (doInvert) isForeground = !isForeground && alpha > 10;
+    if (isForeground) {
+      d[i] = 0; d[i+1] = 0; d[i+2] = 0; d[i+3] = 255;
+    } else {
+      d[i] = 255; d[i+1] = 255; d[i+2] = 255; d[i+3] = 0;
+    }
+  }
+  return out;
+}
+
+// Upsamples via a bilinear-filtered canvas draw before tracing. Source PNGs/JPGs carry
+// anti-aliased edges (a gradient of intermediate luminance/colour across a boundary, not a hard
+// jump) — thresholding or quantizing straight off the native pixels throws that gradient away
+// and the tracer only ever sees stair-stepped blocks to fit curves to. Upsampling first lets the
+// threshold/quantize step resolve the boundary at sub-pixel positions, so the tracer gets far
+// more (and far smoother) contour points to work from. The final SVG's width/height attributes
+// are still set to the ORIGINAL image size afterwards, so this only buys curve smoothness —
+// it never changes the exported/displayed dimensions.
+function computeSuperScale(w, h){
+  const longSide = Math.max(w, h);
+  if (longSide <= 500) return 4;
+  if (longSide <= 900) return 3;
+  if (longSide <= 1600) return 2.5;
+  if (longSide <= 2600) return 1.75;
+  if (longSide <= 4000) return 1.25;
+  return 1;
+}
+
+function upsampleImageData(imgData, scale){
+  if (scale <= 1) return imgData;
+  const srcCanvas = document.createElement('canvas');
+  srcCanvas.width = imgData.width;
+  srcCanvas.height = imgData.height;
+  srcCanvas.getContext('2d').putImageData(imgData, 0, 0);
+
+  const dstW = Math.round(imgData.width * scale);
+  const dstH = Math.round(imgData.height * scale);
+  const dstCanvas = document.createElement('canvas');
+  dstCanvas.width = dstW;
+  dstCanvas.height = dstH;
+  const dctx = dstCanvas.getContext('2d');
+  dctx.imageSmoothingEnabled = true;
+  dctx.imageSmoothingQuality = 'high';
+  dctx.drawImage(srcCanvas, 0, 0, dstW, dstH);
+  return dctx.getImageData(0, 0, dstW, dstH);
+}
+
+// Blurs the (already-upsampled) pixels BEFORE thresholding/quantizing. Upsampling alone still
+// leaves a hard binary edge once thresholded — at finer resolution, but still a staircase — and
+// a tight path-fidelity setting then faithfully traces every one of those tiny steps as jagged
+// micro-corners instead of a smooth curve. Blurring first softens that boundary into a gradient
+// again, so the threshold cuts through it at a smoothly-varying sub-pixel position, giving the
+// tracer an actually smooth contour to follow. Uses the canvas 2D `filter` (real Gaussian blur)
+// rather than ImageTracer's own post-quantization blurradius option, which runs too late in the
+// pipeline to fix binary-mask staircasing.
+function smoothImageData(imgData, radiusPx){
+  if (radiusPx <= 0) return imgData;
+  const src = document.createElement('canvas');
+  src.width = imgData.width;
+  src.height = imgData.height;
+  src.getContext('2d').putImageData(imgData, 0, 0);
+
+  const dst = document.createElement('canvas');
+  dst.width = imgData.width;
+  dst.height = imgData.height;
+  const dctx = dst.getContext('2d');
+  dctx.filter = `blur(${radiusPx}px)`;
+  dctx.drawImage(src, 0, 0);
+  return dctx.getImageData(0, 0, imgData.width, imgData.height);
+}
+
+function runTrace(){
+  if (!originalImageData || typeof ImageTracer === 'undefined') return;
+  traceStatus.textContent = 'Tracing…';
+
+  // setTimeout, not requestAnimationFrame — rAF is fully paused on a backgrounded/inactive tab,
+  // which would leave a trace started right before a tab-switch stuck at "Tracing…" forever.
+  // setTimeout still yields one tick (letting the status text paint before the heavy synchronous
+  // work below blocks the thread) but keeps firing regardless of tab visibility.
+  setTimeout(() => {
+    try {
+      const isBw = modeSelect.value === 'bw';
+      const tres = simplifyToTres(parseFloat(simplify.value));
+      const superScale = computeSuperScale(originalImageData.width, originalImageData.height);
+      // Blur radius in upsampled-pixel space, scaled by how much we upsampled so one slider
+      // notch means the same relative smoothing regardless of source resolution.
+      const blurPx = parseFloat(smoothing.value) * (superScale / 2);
+      const options = {
+        // ltres/qtres were tied to the same value, which starves curved regions of real Bezier
+        // fitting: the tracer tries a straight-line fit first and only falls back to a curve when
+        // that fails, so an ltres tight enough for accurate corners/straight edges also cuts off
+        // every curve fit attempt after just a couple of points — producing a path that's
+        // technically "vector" but is actually hundreds of tiny straight segments imitating a
+        // curve (confirmed: a test letter went from 173 line / 21 curve segments to 18 line / 22
+        // curve segments once qtres was freed to be much more permissive than ltres, with no
+        // visible loss of shape accuracy). Corners/straight edges stay governed by the tighter
+        // ltres; only the curve-fit tolerance is loosened.
+        ltres: tres,
+        qtres: tres * 20,
+        pathomit: parseInt(speckle.value),
+        blurradius: 0,
+        roundcoords: 2,
+        rightangleenhance: rightAngle.checked,
+        strokewidth: 0,
+        scale: 1,
+        viewbox: true,
+        colorquantcycles: 4
+      };
+
+      let svgString;
+      if (isBw) {
+        let upsampled = upsampleImageData(originalImageData, superScale);
+        upsampled = smoothImageData(upsampled, blurPx);
+        const bwData = buildBwImageData(upsampled, parseInt(threshold.value), invert.checked);
+        options.numberofcolors = 2;
+        options.pal = [
+          { r: 255, g: 255, b: 255, a: 0 },
+          { r: 0, g: 0, b: 0, a: 255 }
+        ];
+        svgString = ImageTracer.imagedataToSVG(bwData, options);
+        swatchList.innerHTML = '<span class="swatch-empty">Line art — single colour</span>';
+      } else {
+        let workingData = upsampleImageData(originalImageData, superScale);
+        workingData = smoothImageData(workingData, blurPx);
+        options.numberofcolors = parseInt(colorCount.value);
+        svgString = ImageTracer.imagedataToSVG(workingData, options);
+        renderPalette(svgString);
+      }
+
+      lastSvgString = svgString;
+      svgHolder.innerHTML = svgString;
+      const svgEl = svgHolder.querySelector('svg');
+      if (svgEl) {
+        svgEl.setAttribute('width', originalImageData.width);
+        svgEl.setAttribute('height', originalImageData.height);
+      }
+      renderZoomSize();
+      const pathMatches = svgString.match(/<path/g);
+      pathCountEl.textContent = (pathMatches ? pathMatches.length : 0) + ' paths';
+      svgSizeEl.textContent = (new Blob([svgString]).size / 1024).toFixed(1) + ' KB';
+      traceStatus.textContent = '';
+    } catch (e) {
+      console.error(e);
+      traceStatus.textContent = 'Trace failed — try a smaller image or different settings.';
+    }
+  });
+}
+
+function renderPalette(svgString){
+  const fills = new Set();
+  const re = /fill="(#[0-9a-fA-F]{6}|rgba?\([^)]+\))"/g;
+  let m;
+  while ((m = re.exec(svgString)) !== null) fills.add(m[1]);
+  swatchList.innerHTML = '';
+  if (fills.size === 0) {
+    swatchList.innerHTML = '<span class="swatch-empty">No colors detected</span>';
+    return;
+  }
+  fills.forEach(color => {
+    const sw = document.createElement('div');
+    sw.className = 'sw';
+    sw.style.background = color;
+    sw.title = color;
+    swatchList.appendChild(sw);
+  });
+}
+
+document.getElementById('downloadSvg').addEventListener('click', () => {
+  if (!lastSvgString) return;
+  const blob = new Blob([lastSvgString], { type: 'image/svg+xml' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'vector-prep-trace.svg';
+  a.click();
+  URL.revokeObjectURL(a.href);
+});
+
+document.getElementById('downloadPng').addEventListener('click', () => {
+  if (!lastSvgString) return;
+  const svgBlob = new Blob([lastSvgString], { type: 'image/svg+xml' });
+  const url = URL.createObjectURL(svgBlob);
+  const img = new Image();
+  img.onload = () => {
+    const off = document.createElement('canvas');
+    off.width = canvas.width;
+    off.height = canvas.height;
+    const offCtx = off.getContext('2d');
+    offCtx.drawImage(img, 0, 0, off.width, off.height);
+    off.toBlob(blob => {
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = 'vector-prep-preview.png';
+      a.click();
+      URL.revokeObjectURL(a.href);
+      URL.revokeObjectURL(url);
+    }, 'image/png');
+  };
+  img.src = url;
+});
+
+modeSelect.dispatchEvent(new Event('change'));
+</script>
+</body>
+</html>
