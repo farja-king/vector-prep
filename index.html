@@ -385,6 +385,7 @@
           <label style="font-size:11px; color:#8a8578; display:block; margin-top:4px;">
             <input type="checkbox" id="invert"> Invert (trace the light areas instead)
           </label>
+          <button class="action ghost" id="resetTraceMode" style="margin-top:10px;">Reset Trace Mode to Defaults</button>
         </div>
 
         <div id="colorControls" style="display:none;">
@@ -630,6 +631,41 @@ modeSelect.addEventListener('change', () => {
   scheduleTrace();
 });
 
+// Curve smoothing / Speckle removal / Edge smoothing / Right-angle enhance are ONE shared Detail
+// panel used by both trace modes — without this, tuning them while working on Color mode would
+// silently change the B&W baseline too, since it's the literal same slider value feeding both
+// code paths. Each mode gets its own remembered state, saved whenever you leave a mode and
+// restored whenever you come back to it, so testing Color mode can never disturb B&W's settings.
+let currentDetailMode = 'bw';
+const modeDetailState = {
+  bw: { simplify: 438, speckle: 3, smoothing: 0.9, rightAngle: true },
+  color: { simplify: 438, speckle: 3, smoothing: 0.9, rightAngle: true }
+};
+function saveDetailState(modeKey){
+  modeDetailState[modeKey] = {
+    simplify: parseInt(simplify.value),
+    speckle: parseInt(speckle.value),
+    smoothing: parseFloat(smoothing.value),
+    rightAngle: rightAngle.checked
+  };
+}
+function loadDetailState(modeKey){
+  const s = modeDetailState[modeKey];
+  simplify.value = s.simplify;
+  simplify.dispatchEvent(new Event('input'));
+  speckle.value = s.speckle;
+  speckle.dispatchEvent(new Event('input'));
+  smoothing.value = s.smoothing;
+  smoothing.dispatchEvent(new Event('input'));
+  rightAngle.checked = s.rightAngle;
+  rightAngle.dispatchEvent(new Event('change'));
+}
+modeSelect.addEventListener('change', () => {
+  saveDetailState(currentDetailMode);
+  currentDetailMode = modeSelect.value === 'bw' ? 'bw' : 'color';
+  loadDetailState(currentDetailMode);
+});
+
 // Keeps a range slider and a number input in sync both ways, like Print Prep's slider+number
 // pairs — drag for coarse changes, type or click the up/down arrows for precise ones. toDisplay/
 // fromDisplay let a pair use a transformed value in the number box (e.g. simplify's slider is an
@@ -670,6 +706,14 @@ bindSliderNumberPair(
 invert.addEventListener('change', () => scheduleTrace());
 rightAngle.addEventListener('change', () => scheduleTrace());
 
+const TRACE_MODE_DEFAULTS = { threshold: 70, invert: false };
+document.getElementById('resetTraceMode').addEventListener('click', () => {
+  threshold.value = TRACE_MODE_DEFAULTS.threshold;
+  threshold.dispatchEvent(new Event('input'));
+  invert.checked = TRACE_MODE_DEFAULTS.invert;
+  invert.dispatchEvent(new Event('change'));
+});
+
 const DETAIL_DEFAULTS = { simplifySlider: 438, speckle: 3, smoothing: 0.9, rightAngle: true };
 document.getElementById('resetDetail').addEventListener('click', () => {
   simplify.value = DETAIL_DEFAULTS.simplifySlider;
@@ -680,6 +724,9 @@ document.getElementById('resetDetail').addEventListener('click', () => {
   smoothing.dispatchEvent(new Event('input'));
   rightAngle.checked = DETAIL_DEFAULTS.rightAngle;
   rightAngle.dispatchEvent(new Event('change'));
+  // Without this, switching modes afterward would silently restore the PRE-reset values from
+  // modeDetailState, undoing the reset the moment you leave this mode.
+  saveDetailState(currentDetailMode);
 });
 
 // Otsu's method: finds the luminance threshold that best splits a bimodal histogram (e.g. dark
@@ -787,6 +834,9 @@ document.getElementById('suggestSettings').addEventListener('click', () => {
 
   rightAngle.checked = true;
   rightAngle.dispatchEvent(new Event('change'));
+  // Same reason as the reset button — without this, a later mode switch would restore
+  // whatever Detail values existed before this suggestion, discarding it.
+  saveDetailState(currentDetailMode);
 });
 
 // Wraps every number input with custom up/down stepper buttons — moving the input into a new
