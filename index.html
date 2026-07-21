@@ -396,6 +396,7 @@
             </div>
             <input type="number" class="num-input" id="colorCountNum" min="2" max="32" step="1" value="8">
           </div>
+          <button class="action ghost" id="resetColorCount" style="margin-top:10px;">Reset Color Count to Default</button>
         </div>
       </div>
 
@@ -435,7 +436,29 @@
 
       <div class="tool-block" id="paletteBlock" style="display:none;">
         <h3><span class="n">02</span> Detected palette</h3>
+        <p class="hint">Click a color to give it its own curve fit / edge smoothing, overriding the shared Detail settings just for that color.</p>
         <div class="swatch-list" id="swatchList"><span class="swatch-empty">Trace an image to see colors</span></div>
+        <div id="colorOverridePanel" style="display:none; margin-top:12px; padding-top:12px; border-top:1px solid var(--paper-line);">
+          <div style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:#8a8578;margin-bottom:8px;display:flex;align-items:center;gap:8px;">
+            <span id="overrideColorSwatch" style="width:16px;height:16px;border-radius:50%;border:2px solid var(--ink);display:inline-block;"></span>
+            <span>Editing this color only</span>
+          </div>
+          <div class="slider-row">
+            <div class="slider-col">
+              <label>Curve fit</label>
+              <input type="range" id="overrideCurveFit" min="0.02" max="20" step="0.01" value="2.21">
+            </div>
+            <input type="number" class="num-input" id="overrideCurveFitNum" min="0.02" max="20" step="0.01" value="2.21">
+          </div>
+          <div class="slider-row">
+            <div class="slider-col">
+              <label>Edge smoothing</label>
+              <input type="range" id="overrideEdgeSmoothing" min="0" max="20" step="0.1" value="5">
+            </div>
+            <input type="number" class="num-input" id="overrideEdgeSmoothingNum" min="0" max="20" step="0.1" value="5">
+          </div>
+          <button class="action ghost" id="overrideUseGlobal">Use Global Settings for This Color</button>
+        </div>
       </div>
 
       <div class="tool-block">
@@ -490,6 +513,7 @@ const viewVectorBtn = document.getElementById('viewVector');
 
 let originalImageData = null; // pristine pixels straight from the loaded image — every trace re-runs from this, never from a previous trace's output
 let lastSvgString = '';
+let lastPalette = []; // Color mode's current palette — indices here are what colorOverrides keys into
 let traceTimeout = null;
 
 // Maps the 0-4000 slider to an ltres/qtres error threshold of 0.02-20 — widened again from
@@ -595,6 +619,11 @@ function loadImageFile(file){
       ctx.clearRect(0, 0, canvas.width, canvas.height);
       ctx.drawImage(img, 0, 0);
       originalImageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      // A new image gets a fresh palette with different colors in a different order — any
+      // per-color overrides from the previous image would silently apply to the wrong colors.
+      colorOverrides = {};
+      selectedColorIndex = null;
+      colorOverridePanel.style.display = 'none';
       stage.classList.add('on');
       dimsEl.textContent = canvas.width + ' × ' + canvas.height;
       setView(false);
@@ -615,6 +644,10 @@ drop.addEventListener('drop', e => { if (e.dataTransfer.files[0]) loadImageFile(
 document.getElementById('reset').addEventListener('click', () => {
   originalImageData = null;
   lastSvgString = '';
+  lastPalette = [];
+  colorOverrides = {};
+  selectedColorIndex = null;
+  colorOverridePanel.style.display = 'none';
   stage.classList.remove('on');
   fileInput.value = '';
   ctx.clearRect(0, 0, canvas.width, canvas.height);
@@ -637,9 +670,20 @@ modeSelect.addEventListener('change', () => {
 // code paths. Each mode gets its own remembered state, saved whenever you leave a mode and
 // restored whenever you come back to it, so testing Color mode can never disturb B&W's settings.
 let currentDetailMode = 'bw';
+// Color mode's default Edge smoothing is higher than B&W's — confirmed directly on a real
+// gradient-shaded logo: unblurred color quantization produced 6491 paths (one color alone had
+// nearly 2000), because a real illustrated gradient (shiny highlight shading, not just an
+// anti-aliased edge) forces per-pixel "nearest palette color" decisions that flicker back and
+// forth across the transition, creating speckle. Blur smooths that decision boundary. B&W stays
+// low (0.9) because it needs to protect sharp right-angle corners; color mode has no such
+// corner-fidelity requirement most of the time. IMPORTANT: path count alone is a misleading way
+// to tune this — pushing blur up to 10-12 minimizes path count further but visibly turns real
+// shape detail into a soft/mushy blob (confirmed against the actual reference logo). 5 is the
+// value that actually looked right on that same file: clean, crisp, flat-vector shapes with no
+// speckle, at colorCount 8.
 const modeDetailState = {
   bw: { simplify: 438, speckle: 3, smoothing: 0.9, rightAngle: true },
-  color: { simplify: 438, speckle: 3, smoothing: 0.9, rightAngle: true }
+  color: { simplify: 438, speckle: 3, smoothing: 5, rightAngle: true }
 };
 function saveDetailState(modeKey){
   modeDetailState[modeKey] = {
@@ -703,6 +747,53 @@ bindSliderNumberPair(
   displayVal => tresToSimplify(displayVal)
 );
 
+// Per-color overrides for Curve fit / Edge smoothing — these are plain tres/radius values
+// directly (not the 0-4000 slider-index indirection the global Curve smoothing control uses),
+// since they're a secondary fine-tune control and don't need that much resolution.
+const overrideCurveFit = document.getElementById('overrideCurveFit');
+const overrideCurveFitNum = document.getElementById('overrideCurveFitNum');
+const overrideEdgeSmoothing = document.getElementById('overrideEdgeSmoothing');
+const overrideEdgeSmoothingNum = document.getElementById('overrideEdgeSmoothingNum');
+bindSliderNumberPair(overrideCurveFit, overrideCurveFitNum, v => (+v).toFixed(2));
+bindSliderNumberPair(overrideEdgeSmoothing, overrideEdgeSmoothingNum, v => (+v).toFixed(1));
+
+let colorOverrides = {}; // paletteIndex -> { curveFit, edgeSmoothing }
+let selectedColorIndex = null;
+const colorOverridePanel = document.getElementById('colorOverridePanel');
+const overrideColorSwatch = document.getElementById('overrideColorSwatch');
+
+function selectColorForOverride(index, colorCss){
+  selectedColorIndex = index;
+  overrideColorSwatch.style.background = colorCss;
+  colorOverridePanel.style.display = 'block';
+  const existing = colorOverrides[index];
+  const curveFitVal = existing ? existing.curveFit : simplifyToTres(parseFloat(simplify.value));
+  const edgeVal = existing ? existing.edgeSmoothing : parseFloat(smoothing.value);
+  overrideCurveFit.value = curveFitVal;
+  overrideCurveFit.dispatchEvent(new Event('input'));
+  overrideEdgeSmoothing.value = edgeVal;
+  overrideEdgeSmoothing.dispatchEvent(new Event('input'));
+}
+
+[overrideCurveFit, overrideEdgeSmoothing].forEach(el => {
+  el.addEventListener('input', () => {
+    if (selectedColorIndex === null) return;
+    colorOverrides[selectedColorIndex] = {
+      curveFit: parseFloat(overrideCurveFit.value),
+      edgeSmoothing: parseFloat(overrideEdgeSmoothing.value)
+    };
+    scheduleTrace();
+  });
+});
+
+document.getElementById('overrideUseGlobal').addEventListener('click', () => {
+  if (selectedColorIndex === null) return;
+  delete colorOverrides[selectedColorIndex];
+  colorOverridePanel.style.display = 'none';
+  selectedColorIndex = null;
+  scheduleTrace();
+});
+
 invert.addEventListener('change', () => scheduleTrace());
 rightAngle.addEventListener('change', () => scheduleTrace());
 
@@ -714,15 +805,25 @@ document.getElementById('resetTraceMode').addEventListener('click', () => {
   invert.dispatchEvent(new Event('change'));
 });
 
-const DETAIL_DEFAULTS = { simplifySlider: 438, speckle: 3, smoothing: 0.9, rightAngle: true };
+const COLOR_COUNT_DEFAULT = 8;
+document.getElementById('resetColorCount').addEventListener('click', () => {
+  colorCount.value = COLOR_COUNT_DEFAULT;
+  colorCount.dispatchEvent(new Event('input'));
+});
+
+const DETAIL_DEFAULTS = {
+  bw: { simplifySlider: 438, speckle: 3, smoothing: 0.9, rightAngle: true },
+  color: { simplifySlider: 438, speckle: 3, smoothing: 5, rightAngle: true }
+};
 document.getElementById('resetDetail').addEventListener('click', () => {
-  simplify.value = DETAIL_DEFAULTS.simplifySlider;
+  const d = DETAIL_DEFAULTS[currentDetailMode];
+  simplify.value = d.simplifySlider;
   simplify.dispatchEvent(new Event('input'));
-  speckle.value = DETAIL_DEFAULTS.speckle;
+  speckle.value = d.speckle;
   speckle.dispatchEvent(new Event('input'));
-  smoothing.value = DETAIL_DEFAULTS.smoothing;
+  smoothing.value = d.smoothing;
   smoothing.dispatchEvent(new Event('input'));
-  rightAngle.checked = DETAIL_DEFAULTS.rightAngle;
+  rightAngle.checked = d.rightAngle;
   rightAngle.dispatchEvent(new Event('change'));
   // Without this, switching modes afterward would silently restore the PRE-reset values from
   // modeDetailState, undoing the reset the moment you leave this mode.
@@ -806,12 +907,17 @@ document.getElementById('suggestSettings').addEventListener('click', () => {
     invert.checked = a.cornerBrightness < 110;
     invert.dispatchEvent(new Event('change'));
   } else {
-    // Distinct-color count, clamped to the slider's range. Photos naturally blow past the
-    // slider's max (thousands of gradient buckets) and just clamp to 32, which is exactly what
-    // posterization needs anyway — no extra scaling required there. The case that actually needs
-    // an accurate count is a flat-color graphic with genuinely few true colors, where the raw
-    // count IS the right answer (a 4-color logo needs ~4 palette slots, not ~1).
-    colorCount.value = Math.max(2, Math.min(32, a.distinctColors));
+    // Distinct-color count, clamped to the slider's range — but the ceiling depends on WHY the
+    // raw count is high. For a genuinely flat-color graphic, a high count means many real design
+    // colors, and the raw count IS the right answer (a 4-color logo needs ~4 slots, not ~1). But
+    // for a gradient-shaded illustration (soft highlights/shading, not flat fills), a high raw
+    // count is mostly just continuous shading variation, not real distinct hues — clamping that
+    // straight to 32 chases the gradient instead of giving a clean posterized look (confirmed:
+    // 32 on a real shaded logo produced a much muddier result than the artist's own preferred 8).
+    // High midtone ratio is the same "soft/gradient" signal used for edge smoothing below, so a
+    // lower ceiling there gets applied here too.
+    const colorCeiling = a.midtoneRatio > 0.15 ? 16 : 32;
+    colorCount.value = Math.max(2, Math.min(colorCeiling, a.distinctColors));
     colorCount.dispatchEvent(new Event('input'));
   }
 
@@ -826,10 +932,20 @@ document.getElementById('suggestSettings').addEventListener('click', () => {
   speckle.value = Math.max(1, Math.min(20, Math.round(a.totalPixels / 90000)));
   speckle.dispatchEvent(new Event('input'));
 
-  // Edge smoothing stays deliberately conservative — it's the blunt tool that chamfers real
-  // corners (confirmed earlier), so only nudge it up when the source itself is genuinely soft/
-  // anti-aliased (high midtone ratio), never as the default way to fix jagged curves.
-  smoothing.value = Math.min(2, +(a.midtoneRatio * 8).toFixed(1));
+  // Edge smoothing: in B&W mode this stays deliberately conservative — it's the blunt tool that
+  // chamfers real corners — so only nudge it up when the source itself is genuinely soft/anti-
+  // aliased (high midtone ratio). Color mode has a higher ceiling: a real gradient-shaded
+  // illustration (highlights/shading within a color region, not just an anti-aliased edge) needs
+  // real blur to smooth the "flickering" per-pixel nearest-color decision across the gradient
+  // before quantization. IMPORTANT: more blur isn't automatically better here — minimizing path
+  // count alone pushed this toward 12-15 in earlier testing, which visibly turned real shape
+  // detail into a soft/mushy blob on the actual reference logo. 5 is what looked genuinely clean
+  // and crisp on that same file (midtone ratio ~0.31), which is what this multiplier/cap is
+  // calibrated against.
+  const isBwMode = modeSelect.value === 'bw';
+  const smoothingCap = isBwMode ? 2 : 8;
+  const smoothingMultiplier = isBwMode ? 8 : 16;
+  smoothing.value = Math.min(smoothingCap, +(a.midtoneRatio * smoothingMultiplier).toFixed(1));
   smoothing.dispatchEvent(new Event('input'));
 
   rightAngle.checked = true;
@@ -965,6 +1081,204 @@ function smoothImageData(imgData, radiusPx){
   return dctx.getImageData(0, 0, imgData.width, imgData.height);
 }
 
+// ImageTracer's own built-in color quantization is unreliable whenever a design has very
+// unevenly-sized color regions (e.g. a thick black outline + a few small accent-color details,
+// as in most logos) — confirmed directly: on a 9-distinct-color test image shaped like that, it
+// never produced more than 5 fill colors no matter what numberofcolors was requested (6 through
+// 12 all collapsed to the same ~5). The failure mode is an empty/duplicate cluster problem: when
+// a candidate palette color ends up with no assigned pixels after quantization, ImageTracer has
+// no mechanism to notice and re-seed it, so a small distinct region just gets silently swallowed
+// into whichever big cluster is nearest — which is exactly what "asking for more colors gives
+// FEWER detected colors" looks like.
+//
+// Only sampling "flat interior" pixels — ones whose nearby neighbors are essentially the same
+// color — is what actually matters here, more than the clustering algorithm itself: without it,
+// anti-aliased blend pixels along every edge in the design get sampled too, and once a complex
+// logo has enough total edge length, the ACCUMULATED blend-pixel samples can rival or outrank a
+// genuinely small real color, so a plain farthest-point/frequency seeding still ends up picking
+// a blend shade as its own "color" — confirmed directly: on a 4-real-color test image, asking
+// for 5+ colors kept adding fabricated near-black/near-green blend shades and the path count
+// exploded from 5 to 128, matching the "2587 paths / busy noise" symptom on a real logo. Filtering
+// the sample set to flat-interior pixels before clustering fixes this at the source: the same
+// test now stays at a clean 5 paths no matter how many colors are requested (extras just
+// harmlessly duplicate a real color), while still finding every genuinely small distinct color
+// correctly (verified against the uneven-region test from the original bug: 6→6 ... 9→9, then
+// correctly plateaus at 9 — the true color count — instead of ever fabricating a 10th).
+function sampleFlatPixels(imgData, step, checkDist, threshold){
+  const { data, width, height } = imgData;
+  const samples = [];
+  const thr2 = threshold * threshold;
+  for (let y = 0; y < height; y += step){
+    for (let x = 0; x < width; x += step){
+      const i = (y * width + x) * 4;
+      if (data[i + 3] < 10) continue;
+      const r = data[i], g = data[i + 1], b = data[i + 2];
+      let flat = true;
+      const offsets = [[-checkDist, 0], [checkDist, 0], [0, -checkDist], [0, checkDist]];
+      for (const [dx, dy] of offsets){
+        const nx = x + dx, ny = y + dy;
+        if (nx < 0 || nx >= width || ny < 0 || ny >= height) continue;
+        const ni = (ny * width + nx) * 4;
+        if (data[ni + 3] < 10){ flat = false; break; }
+        const dr = data[ni] - r, dg = data[ni + 1] - g, db = data[ni + 2] - b;
+        if (dr * dr + dg * dg + db * db > thr2){ flat = false; break; }
+      }
+      if (flat) samples.push([r, g, b]);
+    }
+  }
+  return samples;
+}
+
+function kMeansPalette(imgData, k, iterations){
+  const { width, height, data } = imgData;
+  const step = Math.max(1, Math.round(Math.sqrt((width * height) / 40000)));
+  let samples = sampleFlatPixels(imgData, step, step, 12);
+  // A busy/photographic image (lots of gradients, few truly flat regions) can starve the flat-
+  // pixel filter down to almost nothing — fall back to unfiltered sampling rather than
+  // clustering on a near-empty set in that case.
+  if (samples.length < k * 20) {
+    samples = [];
+    for (let y = 0; y < height; y += step){
+      for (let x = 0; x < width; x += step){
+        const i = (y * width + x) * 4;
+        if (data[i + 3] >= 10) samples.push([data[i], data[i + 1], data[i + 2]]);
+      }
+    }
+  }
+  if (samples.length === 0) return [{ r: 0, g: 0, b: 0, a: 255 }];
+  k = Math.min(k, samples.length);
+
+  const dist2 = (a, b) => {
+    const dr = a[0] - b[0], dg = a[1] - b[1], db = a[2] - b[2];
+    return dr * dr + dg * dg + db * db;
+  };
+
+  const centroids = [samples[0].slice()];
+  const minDist = new Array(samples.length).fill(Infinity);
+  while (centroids.length < k){
+    let maxD = -1, maxIdx = 0;
+    for (let s = 0; s < samples.length; s++){
+      const d = dist2(samples[s], centroids[centroids.length - 1]);
+      if (d < minDist[s]) minDist[s] = d;
+      if (minDist[s] > maxD){ maxD = minDist[s]; maxIdx = s; }
+    }
+    centroids.push(samples[maxIdx].slice());
+  }
+
+  const assign = new Array(samples.length).fill(0);
+  for (let iter = 0; iter < iterations; iter++){
+    for (let s = 0; s < samples.length; s++){
+      let best = 0, bestD = Infinity;
+      for (let c = 0; c < centroids.length; c++){
+        const d = dist2(samples[s], centroids[c]);
+        if (d < bestD){ bestD = d; best = c; }
+      }
+      assign[s] = best;
+    }
+    const sums = centroids.map(() => [0, 0, 0, 0]);
+    for (let s = 0; s < samples.length; s++){
+      const c = assign[s];
+      sums[c][0] += samples[s][0]; sums[c][1] += samples[s][1]; sums[c][2] += samples[s][2]; sums[c][3]++;
+    }
+    for (let c = 0; c < centroids.length; c++){
+      if (sums[c][3] > 0){
+        centroids[c] = [sums[c][0] / sums[c][3], sums[c][1] / sums[c][3], sums[c][2] / sums[c][3]];
+      } else {
+        let maxD = -1, maxIdx = 0;
+        for (let s = 0; s < samples.length; s++){
+          let dmin = Infinity;
+          for (let cc = 0; cc < centroids.length; cc++) dmin = Math.min(dmin, dist2(samples[s], centroids[cc]));
+          if (dmin > maxD){ maxD = dmin; maxIdx = s; }
+        }
+        centroids[c] = samples[maxIdx].slice();
+      }
+    }
+  }
+  return centroids.map(c => ({ r: Math.round(c[0]), g: Math.round(c[1]), b: Math.round(c[2]), a: 255 }));
+}
+
+// Gaussian blur (used for B&W) turned out to be the wrong tool for color-mode noise: it softens
+// EVERY boundary uniformly, including flat-color edges that were already crisp, which is exactly
+// why blur-smoothed color traces looked mushy rather than clean. The right fix is a majority-vote
+// despeckle pass on the DISCRETE palette classification, not a blend of raw pixel colors: classify
+// every pixel to its nearest palette color first (crisp, no blending), then replace each pixel
+// with whichever class is most common in its neighborhood. A true edge between two real regions
+// has a clear majority on each side of the boundary at any reasonable radius, so it stays exactly
+// where it is; only genuinely noisy/flickering pixels (the ones a smooth gradient produces when
+// forced through nearest-color classification) get corrected. Confirmed on the real reference
+// logo: this got color-mode path count lower than Gaussian blur did (156 vs 244 at the same color
+// count) while looking crisp rather than soft.
+function classifyToPalette(imgData, pal){
+  const { data, width, height } = imgData;
+  const classes = new Int16Array(width * height).fill(-1);
+  for (let y = 0; y < height; y++){
+    for (let x = 0; x < width; x++){
+      const i = (y * width + x) * 4;
+      if (data[i + 3] < 10) continue;
+      let best = 0, bestD = Infinity;
+      for (let p = 0; p < pal.length; p++){
+        const dr = data[i] - pal[p].r, dg = data[i + 1] - pal[p].g, db = data[i + 2] - pal[p].b;
+        const d = dr * dr + dg * dg + db * db;
+        if (d < bestD){ bestD = d; best = p; }
+      }
+      classes[y * width + x] = best;
+    }
+  }
+  return classes;
+}
+
+// A majority-vote window has a real weakness at SMALL radius on diagonal/curved boundaries: a
+// 3x3 or 5x5 window doesn't sample a diagonal edge symmetrically, so the vote can flip
+// inconsistently along an otherwise-smooth boundary, manufacturing a NEW staircase artifact
+// rather than removing one. Confirmed directly on the real reference logo — path count actually
+// got WORSE than doing nothing at radius 1-3 (235 → 867 → 1106 → 308) before finally improving
+// past that at radius 4+ (122, then 97 at radius 6). So the fix isn't just "avoid a radius of
+// exactly 0" — any value above 0 needs to jump straight to a radius large enough to land past
+// that harmful small-radius zone, never land inside it.
+function smoothingToDespeckleRadius(value, superScale){
+  if (value <= 0) return 0;
+  return Math.max(4, Math.round(value * (superScale / 2)));
+}
+
+function despeckleClasses(classes, width, height, radius, k){
+  if (radius <= 0) return classes;
+  const out = new Int16Array(classes.length);
+  const counts = new Int32Array(k);
+  for (let y = 0; y < height; y++){
+    for (let x = 0; x < width; x++){
+      const idx = y * width + x;
+      if (classes[idx] === -1){ out[idx] = -1; continue; }
+      counts.fill(0);
+      for (let dy = -radius; dy <= radius; dy++){
+        const ny = y + dy;
+        if (ny < 0 || ny >= height) continue;
+        for (let dx = -radius; dx <= radius; dx++){
+          const nx = x + dx;
+          if (nx < 0 || nx >= width) continue;
+          const c = classes[ny * width + nx];
+          if (c >= 0) counts[c]++;
+        }
+      }
+      let best = classes[idx], bestCount = -1;
+      for (let c = 0; c < k; c++){ if (counts[c] > bestCount){ bestCount = counts[c]; best = c; } }
+      out[idx] = best;
+    }
+  }
+  return out;
+}
+
+function classesToImageData(classes, pal, width, height){
+  const out = new ImageData(width, height);
+  const d = out.data;
+  for (let i = 0; i < classes.length; i++){
+    const c = classes[i];
+    const o = i * 4;
+    if (c === -1){ d[o + 3] = 0; continue; }
+    d[o] = pal[c].r; d[o + 1] = pal[c].g; d[o + 2] = pal[c].b; d[o + 3] = 255;
+  }
+  return out;
+}
+
 function runTrace(){
   if (!originalImageData || typeof ImageTracer === 'undefined') return;
   traceStatus.textContent = 'Tracing…';
@@ -1016,11 +1330,69 @@ function runTrace(){
         svgString = ImageTracer.imagedataToSVG(bwData, options);
         swatchList.innerHTML = '<span class="swatch-empty">Line art — single colour</span>';
       } else {
-        let workingData = upsampleImageData(originalImageData, superScale);
-        workingData = smoothImageData(workingData, blurPx);
-        options.numberofcolors = parseInt(colorCount.value);
-        svgString = ImageTracer.imagedataToSVG(workingData, options);
-        renderPalette(svgString);
+        const workingData = upsampleImageData(originalImageData, superScale);
+        // Palette computed on the native-resolution source (color identity doesn't need
+        // supersampling, only shape smoothness does) and then supplied directly to ImageTracer,
+        // bypassing its own unreliable quantizer entirely.
+        const requestedColors = parseInt(colorCount.value);
+        const palette = kMeansPalette(originalImageData, requestedColors, 12);
+        lastPalette = palette;
+        const classes = classifyToPalette(workingData, palette);
+
+        // Each color is traced as its OWN isolated single-color layer, with its OWN curve-fit
+        // tolerance and despeckle radius (an override if the user set one for this color via the
+        // palette panel, otherwise the shared Detail settings) — then all layers' paths are
+        // merged into one SVG. Despeckling is grouped by distinct radius actually needed so a
+        // shared radius (the common case) is only computed once, not once per color.
+        const radiusForColor = palette.map((_, idx) => {
+          const ov = colorOverrides[idx];
+          const val = (ov && ov.edgeSmoothing != null) ? ov.edgeSmoothing : parseFloat(smoothing.value);
+          return smoothingToDespeckleRadius(val, superScale);
+        });
+        const despeckledByRadius = {};
+        [...new Set(radiusForColor)].forEach(r => {
+          despeckledByRadius[r] = despeckleClasses(classes, workingData.width, workingData.height, r, palette.length);
+        });
+
+        const mergedPaths = [];
+        let sharedViewBox = null;
+        palette.forEach((color, idx) => {
+          const ov = colorOverrides[idx];
+          const colorTres = (ov && ov.curveFit != null) ? ov.curveFit : tres;
+          const cleanedForThisColor = despeckledByRadius[radiusForColor[idx]];
+          // Isolate only this color's pixels — everything else (including other real colors)
+          // goes transparent for this layer's trace, so its own tolerance only affects its own
+          // shapes. Everywhere else defaults to WHITE (not black) at alpha 0: ImageTracer's
+          // custom-palette matching turned out to ignore alpha entirely and nearest-match on RGB
+          // alone, so a plain zero-initialized (0,0,0,0) "empty" pixel — pure black — got matched
+          // to whichever real color was darkest and flooded the ENTIRE canvas with it. White is
+          // what the transparent palette slot itself is, so those pixels correctly match IT
+          // instead of the real color.
+          const isolated = new ImageData(workingData.width, workingData.height);
+          const d = isolated.data;
+          for (let i = 0; i < d.length; i += 4){ d[i]=255; d[i+1]=255; d[i+2]=255; d[i+3]=0; }
+          for (let i = 0; i < cleanedForThisColor.length; i++){
+            const o = i * 4;
+            if (cleanedForThisColor[i] === idx){ d[o]=color.r; d[o+1]=color.g; d[o+2]=color.b; d[o+3]=255; }
+          }
+          const layerOptions = {
+            ltres: colorTres, qtres: colorTres * 20,
+            pathomit: parseInt(speckle.value), blurradius: 0, roundcoords: 2,
+            rightangleenhance: rightAngle.checked, strokewidth: 0, scale: 1, viewbox: true,
+            colorquantcycles: 1, numberofcolors: 2,
+            pal: [{ r: 255, g: 255, b: 255, a: 0 }, color]
+          };
+          const layerSvg = ImageTracer.imagedataToSVG(isolated, layerOptions);
+          if (!sharedViewBox){
+            const vb = layerSvg.match(/viewBox="([^"]+)"/);
+            if (vb) sharedViewBox = vb[1];
+          }
+          const colorFillRe = new RegExp(`<path[^>]*fill="rgb\\(${color.r},\\s*${color.g},\\s*${color.b}\\)"[^>]*\\/?>`, 'g');
+          const paths = layerSvg.match(colorFillRe) || [];
+          mergedPaths.push(...paths);
+        });
+        svgString = `<svg viewBox="${sharedViewBox || ('0 0 ' + workingData.width + ' ' + workingData.height)}" version="1.1" xmlns="http://www.w3.org/2000/svg">${mergedPaths.join('')}</svg>`;
+        renderPalette(palette);
       }
 
       lastSvgString = svgString;
@@ -1042,23 +1414,31 @@ function runTrace(){
   });
 }
 
-function renderPalette(svgString){
-  const fills = new Set();
-  const re = /fill="(#[0-9a-fA-F]{6}|rgba?\([^)]+\))"/g;
-  let m;
-  while ((m = re.exec(svgString)) !== null) fills.add(m[1]);
+function renderPalette(palette){
   swatchList.innerHTML = '';
-  if (fills.size === 0) {
+  if (!palette || palette.length === 0) {
     swatchList.innerHTML = '<span class="swatch-empty">No colors detected</span>';
     return;
   }
-  fills.forEach(color => {
+  palette.forEach((color, idx) => {
+    const css = `rgb(${color.r},${color.g},${color.b})`;
     const sw = document.createElement('div');
     sw.className = 'sw';
-    sw.style.background = color;
-    sw.title = color;
+    sw.style.background = css;
+    sw.style.cursor = 'pointer';
+    sw.title = css + (colorOverrides[idx] ? ' (custom)' : '');
+    if (colorOverrides[idx]) sw.style.outline = '2px solid var(--thread-red)';
+    if (selectedColorIndex === idx) sw.style.outlineOffset = '2px';
+    sw.addEventListener('click', () => selectColorForOverride(idx, css));
     swatchList.appendChild(sw);
   });
+  // A retrace can change the palette (different colors/order) out from under a selection made
+  // against the previous one — safest to just close the panel rather than risk editing the
+  // wrong color under a stale index.
+  if (selectedColorIndex !== null && selectedColorIndex >= palette.length) {
+    selectedColorIndex = null;
+    colorOverridePanel.style.display = 'none';
+  }
 }
 
 document.getElementById('downloadSvg').addEventListener('click', () => {
