@@ -204,6 +204,8 @@
   canvas.brush-active{cursor:crosshair;}
   #svgHolder{display:none; margin:auto; flex-shrink:0;}
   #svgHolder svg{display:block;}
+  #svgHolder.delete-active path{cursor:pointer;}
+  #svgHolder.delete-active path:hover{opacity:.55; outline:1px dashed var(--thread-red); outline-offset:1px;}
 
   .tools{display:flex; flex-direction:column; gap:14px;}
   .tool-block{background:var(--white); border:1px solid var(--ink); padding:14px;}
@@ -524,13 +526,14 @@
 
       <div class="tool-block">
         <h3><span class="n">03</span> Touch-up brush</h3>
-        <p class="hint">Paints directly onto the source pixels (Source view), so edits get traced properly instead of sitting on top as a raster patch. Switches to Source view automatically.</p>
+        <p class="hint">Freehand modes paint directly onto the source pixels and switch to Source view automatically. Click-delete works in Vector view, on the traced shapes themselves.</p>
         <div class="row" style="margin-bottom:12px;">
           <select id="brushMode">
             <option value="off">Off</option>
             <option value="erase">Erase (remove)</option>
             <option value="restore">Restore (undo to original)</option>
             <option value="paint">Paint (custom color)</option>
+            <option value="clickDelete">Click-delete (path/color)</option>
           </select>
         </div>
         <div id="brushPaintControls" style="display:none;">
@@ -540,8 +543,19 @@
           </div>
           <button class="action ghost" id="eyedropperBtn" style="margin-bottom:12px;">🎨 Pick Color From Image</button>
         </div>
-        <label style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:#8a8578;">Brush size — <span id="brushSizeVal">30</span>px</label>
-        <input type="range" id="brushSize" min="4" max="150" value="30">
+        <div id="brushClickDeleteControls" style="display:none; margin-bottom:12px;">
+          <p class="hint" style="margin-top:0;">Click a shape in the Vector preview to delete it. Deletions erase the underlying source pixels, so they survive re-tracing and stay gone if you change settings afterward.</p>
+          <div class="row">
+            <select id="clickDeleteScope">
+              <option value="shape">Delete this shape only</option>
+              <option value="color">Delete every shape of this color</option>
+            </select>
+          </div>
+        </div>
+        <div id="brushSizeRow">
+          <label style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:#8a8578;">Brush size — <span id="brushSizeVal">30</span>px</label>
+          <input type="range" id="brushSize" min="4" max="150" value="30">
+        </div>
         <div style="height:8px"></div>
         <button class="action ghost" id="brushUndo" style="margin-bottom:6px;">Undo Last Stroke</button>
         <button class="action ghost" id="brushResetAll" style="margin-bottom:12px;">Reset All Touch-ups</button>
@@ -1946,11 +1960,22 @@ function ensurePristineCanvas(){
   return pristineCanvas;
 }
 
+const brushClickDeleteControls = document.getElementById('brushClickDeleteControls');
+const brushSizeRow = document.getElementById('brushSizeRow');
+const clickDeleteScope = document.getElementById('clickDeleteScope');
+
 brushModeSelect.addEventListener('change', () => {
-  brushPaintControls.style.display = brushModeSelect.value === 'paint' ? 'block' : 'none';
-  canvas.classList.toggle('brush-active', brushModeSelect.value !== 'off');
-  if (brushModeSelect.value !== 'off' && originalImageData){
-    setView(false); // brush paints on the raster, so force Source view
+  const mode = brushModeSelect.value;
+  brushPaintControls.style.display = mode === 'paint' ? 'block' : 'none';
+  brushClickDeleteControls.style.display = mode === 'clickDelete' ? 'block' : 'none';
+  brushSizeRow.style.display = mode === 'clickDelete' ? 'none' : 'block'; // brush size is meaningless when deleting whole traced shapes by click
+  canvas.classList.toggle('brush-active', mode !== 'off' && mode !== 'clickDelete');
+  svgHolder.classList.toggle('delete-active', mode === 'clickDelete');
+  if (mode === 'clickDelete' && originalImageData){
+    setView(true); // click-delete targets rendered <path> elements, which only exist in Vector view
+    renderZoomSize();
+  } else if (mode !== 'off' && originalImageData){
+    setView(false); // freehand modes paint on the raster, so force Source view
     renderZoomSize();
   }
 });
@@ -2037,6 +2062,75 @@ canvas.addEventListener('click', e => {
   brushColorInput.value = hex;
   brushModeSelect.value = 'paint';
   brushModeSelect.dispatchEvent(new Event('change'));
+});
+
+// Click-delete: erases the SOURCE pixels behind a clicked traced shape (not just the SVG
+// element), reusing the exact same brushUndoStack / "Undo Last Stroke" / "Reset All Touch-ups"
+// machinery as the freehand brush above — so a deletion survives the next re-trace (unlike
+// removing the <path> from the DOM alone, which the very next scheduleTrace() would silently
+// regenerate from the untouched original pixels) and gets the same one-click-per-step undo the
+// freehand strokes already have, with zero new undo UI needed.
+svgHolder.addEventListener('click', e => {
+  if (brushModeSelect.value !== 'clickDelete' || !originalImageData) return;
+  const pathEl = e.target.closest('path');
+  const svgEl = svgHolder.querySelector('svg');
+  if (!pathEl || !svgEl) return;
+
+  const targets = [pathEl];
+  if (clickDeleteScope.value === 'color') {
+    const fillVal = pathEl.getAttribute('fill');
+    svgEl.querySelectorAll('path').forEach(p => {
+      if (p !== pathEl && p.getAttribute('fill') === fillVal) targets.push(p);
+    });
+  }
+
+  // The SVG's viewBox is in supersampled trace-space (see computeSuperScale), not native image
+  // pixels — reading it directly off the live element rather than recomputing superScale keeps
+  // this correct even if that upsampling factor ever changes independently of this code.
+  const vb = (svgEl.getAttribute('viewBox') || '').split(/\s+/).map(Number);
+  const vbWidth = vb[2] || originalImageData.width;
+  const scale = originalImageData.width / vbWidth;
+
+  // Rasterize the target path(s) at native image resolution to get an erase mask. Each path's `d`
+  // is in its own local coordinate space — Color mode wraps same-settings color groups in a
+  // <g transform="translate(bx0,by0)"> (the group's cropped bounding-box offset, see runTrace's
+  // color branch); B&W paths have no such wrapper. Re-deriving that offset from the live DOM
+  // (rather than trusting anything cached) guarantees the mask lands on the exact pixels the
+  // visible shape actually occupies.
+  const maskCanvas = document.createElement('canvas');
+  maskCanvas.width = originalImageData.width;
+  maskCanvas.height = originalImageData.height;
+  const mctx = maskCanvas.getContext('2d');
+  mctx.setTransform(scale, 0, 0, scale, 0, 0);
+  targets.forEach(p => {
+    const g = p.closest('g[transform]');
+    let tx = 0, ty = 0;
+    if (g) {
+      const m = /translate\(([-\d.]+)[,\s]+([-\d.]+)\)/.exec(g.getAttribute('transform') || '');
+      if (m) { tx = parseFloat(m[1]); ty = parseFloat(m[2]); }
+    }
+    mctx.save();
+    mctx.translate(tx, ty);
+    mctx.fill(new Path2D(p.getAttribute('d')));
+    mctx.restore();
+  });
+  const mask = mctx.getImageData(0, 0, maskCanvas.width, maskCanvas.height).data;
+
+  // Optimistic removal for instant feedback — the real fix (erasing the source pixels below) is
+  // what actually persists; this just avoids a "did my click do anything?" beat while that trace
+  // runs, especially with Auto re-vectorize off, where nothing else would visibly change yet.
+  targets.forEach(p => p.remove());
+
+  brushUndoStack.push(new Uint8ClampedArray(originalImageData.data));
+  if (brushUndoStack.length > 20) brushUndoStack.shift();
+
+  const d = originalImageData.data;
+  for (let i = 3; i < mask.length; i += 4) {
+    if (mask[i] > 0) d[i] = 0;
+  }
+  ctx.putImageData(originalImageData, 0, 0); // keep the raster canvas in sync with originalImageData, like the freehand brush does
+
+  if (autoRevectorizeCheckbox.checked) scheduleTrace();
 });
 
 document.getElementById('brushUndo').addEventListener('click', () => {
