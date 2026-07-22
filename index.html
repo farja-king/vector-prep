@@ -617,6 +617,13 @@ let traceTimeout = null;
 let autoFixPending = false;
 let autoFixMessage = '';
 
+// Same one-shot-per-image pattern as autoFixPending above, but for Color mode: consumed by the
+// first Color-mode trace after a fresh image load (which may not be the very first trace overall,
+// since B&W is the default mode — this stays pending until the user actually switches to Color).
+// The hardcoded Color count default (8) was never actually checked against the image, so a true
+// 2-color logo traced with 8 color slots requested regardless.
+let colorCountAutoPending = false;
+
 // Maps the 0-8000 slider to an ltres/qtres error threshold of 0.02-40 — widened again from
 // 0.02-20 for a busier real-world graphic that needed more headroom on all the Detail controls.
 // Slider steps scale up proportionally so per-notch sensitivity stays the same as before.
@@ -734,6 +741,7 @@ function loadImageFile(file){
       fitZoomToContainer();
       autoFixPending = true;
       autoFixMessage = '';
+      colorCountAutoPending = true;
       scheduleTrace(0);
     };
     img.src = e.target.result;
@@ -758,6 +766,7 @@ document.getElementById('reset').addEventListener('click', () => {
   lastPalette = [];
   autoFixPending = false;
   autoFixMessage = '';
+  colorCountAutoPending = false;
   colorOverrides = {};
   selectedColorIndex = null;
   colorOverridePanel.style.display = 'none';
@@ -1067,7 +1076,18 @@ function estimateTrueColorCount(imgData, maxK){
   // a single sharp local cliff like that correctly when the overall curve is doing other bending
   // elsewhere. Directly finding the k with the single biggest proportional SSE drop from k-1 to k
   // catches this correctly instead.
-  let bestK = kRange[0], bestRatio = -1;
+  //
+  // The loop below only ever compares WITHIN kRange (k=2 upward), so without a k=1 baseline it
+  // can never actually select kRange[0]=2 itself — starting bestRatio at -1 means the very first
+  // comparison (k=2 vs k=3) unconditionally overwrites bestK away from 2, no matter how negligible
+  // that particular step is. That makes a genuinely 2-color image structurally undetectable:
+  // confirmed directly on a flat two-color test image (solid red/blue halves, no gradient/AA) —
+  // this returned 3, never 2, before adding the sse1 baseline below. Computing the true k=1 SSE
+  // (single centroid over everything) and using the k=1->k=2 ratio as the first real candidate
+  // fixes that, while leaving every later comparison (and the already-verified k=7->k=8 real-logo
+  // case above, which lands well inside the untouched loop) exactly as it was.
+  const sse1 = kmeansSSE(1, 6);
+  let bestK = kRange[0], bestRatio = sse1 / Math.max(sseValues[0], 1e-6);
   for (let i = 1; i < kRange.length; i++){
     const ratio = sseValues[i - 1] / Math.max(sseValues[i], 1e-6);
     if (ratio > bestRatio){ bestRatio = ratio; bestK = kRange[i]; }
@@ -1637,6 +1657,22 @@ function runTrace(){
         svgString = ImageTracer.imagedataToSVG(bwData, options);
         swatchList.innerHTML = '<span class="swatch-empty">Line art — single colour</span>';
       } else {
+        // Consumed once per freshly-loaded image, the first time it actually gets traced in
+        // Color mode (which may not be the very first trace overall, since B&W is the default —
+        // this stays pending until the user switches). Bails out before doing any of the actual
+        // (expensive) palette/trace work below, since dispatching 'input' on colorCount already
+        // schedules a fresh retrace with the corrected value moments later.
+        if (colorCountAutoPending) {
+          colorCountAutoPending = false;
+          const priorColorCount = parseInt(colorCount.value);
+          const suggestedColorCount = Math.max(2, Math.min(32, estimateTrueColorCount(originalImageData, 24)));
+          if (suggestedColorCount !== priorColorCount) {
+            colorCount.value = suggestedColorCount;
+            colorCount.dispatchEvent(new Event('input'));
+            autoFixMessage = `Detected ${suggestedColorCount} distinct color${suggestedColorCount === 1 ? '' : 's'} in this image — Color count auto-set to ${suggestedColorCount}. Click "Reset Color Count to Default" to undo.`;
+            return;
+          }
+        }
         const workingData = upsampleImageData(originalImageData, superScale);
         // Palette computed on the native-resolution source (color identity doesn't need
         // supersampling, only shape smoothness does) and then supplied directly to ImageTracer,
