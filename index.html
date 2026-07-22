@@ -1,3 +1,73 @@
+<!--
+  DEV NOTES — read this before picking up work on this file elsewhere.
+  Repo: https://github.com/farja-king/vector-prep (main branch auto-deploys to
+  https://farja-king.github.io/vector-prep/ via GitHub Pages — no build step, no manual deploy).
+
+  WHAT THIS IS: browser-only image-to-SVG vectorizer (imagetracer.js under the hood). Two trace
+  modes — B&W (single global brightness threshold) and Color/Posterize (k-means palette + custom
+  quantization, bypassing imagetracer's own unreliable color matching). All processing is local;
+  nothing leaves the browser.
+
+  RECENT WORK (chronological, most recent last):
+  1. Auto-correct Threshold/Invert when a fresh B&W trace comes back completely blank (light-
+     foreground images tracing to zero visible paths against the fixed default threshold of 70).
+     Scoped to only the first trace after a fresh image load; never fights manual tuning after.
+  2. Auto-detect Color count from the image (estimateTrueColorCount's elbow method) instead of a
+     flat default of 8 — also fixed a real bug in that estimator where it could never return the
+     low end of its own search range (a true 2-color image always got bumped to 3+).
+  3. Click-to-delete traced shapes (new "Delete shapes" section, separate from the freehand
+     Touch-up brush — the two are mutually exclusive, since one needs Source view and the other
+     needs Vector view). Select-then-confirm workflow: click a shape to preview what would be
+     deleted (this shape only / its exact color / similar shades within a live tolerance slider),
+     click again or press Delete Selected to commit. Deletes erase the actual SOURCE pixels (not
+     just the SVG), so they survive re-tracing, and reuse the freehand brush's existing undo stack.
+  4. Tolerance matching is gated on BOTH color distance AND on-canvas proximity (path center
+     distance, scaled to the image's diagonal) — pure color-distance alone jumped straight from
+     "just this shape" to "every shape of that color anywhere in the image" at the first nonzero
+     notch, with no usable middle ground for grabbing just a few nearby similar-shade fragments.
+  5. Re-arm the Color-count auto-detect after a delete-shapes commit, not just on fresh load —
+     deleting a whole color changes the TRUE remaining color count, and leaving Color count stale
+     forced kMeansPalette to invent a spurious near-duplicate shade to fill the now-unneeded slot,
+     which then flickered pixel-by-pixel across an unrelated region into hundreds of fragmented
+     paths. Confirmed and fixed against a real multi-color illustration (not just synthetic tests).
+  6. TRIED then REVERTED: blurring the delete-shapes erase mask to soften the deletion boundary.
+     Turned out unnecessary (the "271 fragmented paths" mess that motivated it was entirely #5's
+     stale-colorCount bug, already fixed, and a plain hard erase already traced cleanly on the same
+     real file once that was fixed) AND it introduced a new, worse defect: it only reduced ALPHA at
+     the fringe, leaving the DELETED shape's own RGB in place there, so classifyToPalette's alpha<10
+     skip threshold let most of that fringe still classify using the deleted color's stale RGB —
+     rendering a visible ghost of the removed shade at full opacity instead of a clean hole. See
+     commitDeleteSelection's mask-building comment for the full detail. Reverted to a plain hard
+     erase (fully erase or fully leave alone, no gradient) — the existing despeckle/majority-vote
+     pass every Color-mode trace already runs is what actually smooths a fresh deletion boundary.
+  7. Added a third trace mode, Greyscale (Multi-tone) — reuses Color mode's ENTIRE pipeline
+     (kMeansPalette, classifyToPalette, despeckle, per-color overrides, group merging,
+     colorCountAutoPending) unchanged, just against a desaturated copy of the source pixels
+     (toGreyscaleImageData), so it produces distinct grey shades with zero duplicated code. Has its
+     own modeDetailState/DETAIL_DEFAULTS bucket so tuning it can't silently drag Color mode's
+     baseline around. Labels swap contextually ("Grey levels"/"Detected shades" vs "Color
+     count"/"Detected palette"). originalImageData itself is never touched by the conversion, so
+     switching back to Color or B&W still traces the real colors.
+
+  INTENTIONAL BEHAVIOR, NOT BUGS:
+  - Deleting a shape leaves a TRANSPARENT hole, not a fill of the surrounding color. Explicitly
+    requested to stay this way: for garment/fabric print use, the hole is meant to let the
+    fabric's own color show through — "fixing" this to auto-fill would break that workflow.
+  - B&W mode's single global threshold will never cleanly separate a genuinely multi-color
+    illustration (5+ real colors) into black/white — that's an inherent mismatch between the
+    technique and that kind of content, not something to chase further. Color mode (or Greyscale,
+    for tonal-only output) is the right tool for multi-color source images, and both already
+    auto-detect the true color/shade count correctly. Leave B&W alone; don't chase threshold
+    quality on multi-color images.
+
+  WORKING AGREEMENT: propose a fix and wait for explicit go-ahead before writing code, even when a
+  bug seems obvious and well-diagnosed — what looks like a defect can be intentional depending on
+  the use case (see the transparent-hole point above, which is exactly that situation). Once agreed,
+  verify against the REAL files in Downloads (IMG_2685.PNG / "wolf export.svg" are the known
+  reference test case for the Delete-shapes + Color-mode pipeline) before pushing, not just
+  synthetic test images — synthetic tests already missed real bugs twice in this project (the
+  ghost-fringe defect above, and the original 271-path mess, both only reproduced on the real file).
+-->
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -392,12 +462,13 @@
     <div class="tools">
       <div class="tool-block">
         <h3><span class="n">00</span> Trace mode</h3>
-        <p class="hint">Line art / logos give the cleanest single-colour trace. Color mode posterizes photos into flat vector regions.</p>
+        <p class="hint">Line art / logos give the cleanest single-colour trace. Color mode posterizes photos into flat vector regions. Greyscale does the same but in tonal shades of grey, no hue.</p>
         <button class="action ghost" id="suggestSettings" style="margin-bottom:12px;">✨ Suggest Settings for This Image</button>
         <div class="row" style="margin-bottom:12px;">
           <select id="mode">
             <option value="bw">Line Art (Black &amp; White)</option>
             <option value="color">Color / Posterize</option>
+            <option value="greyscale">Greyscale (Multi-tone)</option>
           </select>
         </div>
 
@@ -418,7 +489,7 @@
         <div id="colorControls" style="display:none;">
           <div class="slider-row">
             <div class="slider-col">
-              <label>Color count</label>
+              <label id="colorCountLabel">Color count</label>
               <input type="range" id="colorCount" min="2" max="32" value="8">
             </div>
             <input type="number" class="num-input" id="colorCountNum" min="2" max="32" step="1" value="8">
@@ -462,7 +533,7 @@
       </div>
 
       <div class="tool-block" id="paletteBlock" style="display:none;">
-        <h3><span class="n">02</span> Detected palette</h3>
+        <h3><span class="n">02</span> <span id="paletteBlockTitle">Detected palette</span></h3>
         <p class="hint">Click a color to give it its own curve fit / edge smoothing, overriding the shared Detail settings just for that color.</p>
         <div class="swatch-list" id="swatchList"><span class="swatch-empty">Trace an image to see colors</span></div>
         <div id="colorOverridePanel" style="display:none; margin-top:12px; padding-top:12px; border-top:1px solid var(--paper-line);">
@@ -810,11 +881,19 @@ document.getElementById('reset').addEventListener('click', () => {
   paletteBlock.style.display = 'none';
 });
 
+const paletteBlockTitle = document.getElementById('paletteBlockTitle');
+const colorCountLabel = document.getElementById('colorCountLabel');
 modeSelect.addEventListener('change', () => {
   const isBw = modeSelect.value === 'bw';
+  const isGreyscale = modeSelect.value === 'greyscale';
   bwControls.style.display = isBw ? 'block' : 'none';
   colorControls.style.display = isBw ? 'none' : 'block';
   paletteBlock.style.display = isBw ? 'none' : 'block';
+  // Greyscale reuses the exact same palette/classification machinery as Color mode (see runTrace)
+  // on a desaturated copy of the source — only the labels change, so "shades" reads correctly
+  // instead of implying hues that were never in the output.
+  colorCountLabel.textContent = isGreyscale ? 'Grey levels' : 'Color count';
+  paletteBlockTitle.textContent = isGreyscale ? 'Detected shades' : 'Detected palette';
   scheduleTrace();
 });
 
@@ -837,7 +916,11 @@ let currentDetailMode = 'bw';
 // speckle, at colorCount 8.
 const modeDetailState = {
   bw: { simplify: 438, speckle: 3, smoothing: 0.9, rightAngle: true },
-  color: { simplify: 438, speckle: 3, smoothing: 5, rightAngle: true }
+  color: { simplify: 438, speckle: 3, smoothing: 5, rightAngle: true },
+  // Greyscale shares Color mode's starting defaults (same underlying pipeline, see runTrace) —
+  // its own bucket exists so tuning one doesn't silently drag the other's baseline around, same
+  // reasoning as splitting bw/color above.
+  greyscale: { simplify: 438, speckle: 3, smoothing: 5, rightAngle: true }
 };
 function saveDetailState(modeKey){
   modeDetailState[modeKey] = {
@@ -860,7 +943,7 @@ function loadDetailState(modeKey){
 }
 modeSelect.addEventListener('change', () => {
   saveDetailState(currentDetailMode);
-  currentDetailMode = modeSelect.value === 'bw' ? 'bw' : 'color';
+  currentDetailMode = modeSelect.value; // 'bw' | 'color' | 'greyscale' — matches modeDetailState's keys directly
   loadDetailState(currentDetailMode);
 });
 
@@ -996,7 +1079,8 @@ document.getElementById('resetColorCount').addEventListener('click', () => {
 
 const DETAIL_DEFAULTS = {
   bw: { simplifySlider: 438, speckle: 3, smoothing: 0.9, rightAngle: true },
-  color: { simplifySlider: 438, speckle: 3, smoothing: 5, rightAngle: true }
+  color: { simplifySlider: 438, speckle: 3, smoothing: 5, rightAngle: true },
+  greyscale: { simplifySlider: 438, speckle: 3, smoothing: 5, rightAngle: true }
 };
 document.getElementById('resetDetail').addEventListener('click', () => {
   const d = DETAIL_DEFAULTS[currentDetailMode];
@@ -1183,7 +1267,11 @@ document.getElementById('suggestSettings').addEventListener('click', () => {
     // bucket count was 361, but the elbow-estimated true count landed close to the artist's own
     // preferred 8 — a straight bucket-count-with-ceiling heuristic had no principled way to get
     // anywhere near that.
-    colorCount.value = Math.max(2, Math.min(32, estimateTrueColorCount(originalImageData, 24)));
+    // Greyscale needs the TRUE shade count off the desaturated data, not the real-color data —
+    // two hues with identical luminance are one shade in greyscale output even though they're two
+    // distinct colors in Color mode, so estimating off the raw RGB would overcount grey levels.
+    const countSource = modeSelect.value === 'greyscale' ? toGreyscaleImageData(originalImageData) : originalImageData;
+    colorCount.value = Math.max(2, Math.min(32, estimateTrueColorCount(countSource, 24)));
     colorCount.dispatchEvent(new Event('input'));
   }
 
@@ -1331,6 +1419,20 @@ function upsampleImageData(imgData, scale){
 // tracer an actually smooth contour to follow. Uses the canvas 2D `filter` (real Gaussian blur)
 // rather than ImageTracer's own post-quantization blurradius option, which runs too late in the
 // pipeline to fix binary-mask staircasing.
+// Greyscale mode reuses Color mode's ENTIRE pipeline (kMeansPalette, classification, despeckle,
+// per-color overrides, group merging — see runTrace's color/greyscale branch) unchanged, just
+// against a desaturated copy of the source instead of the real RGB data, so it naturally produces
+// distinct grey shades instead of colors with zero code duplication.
+function toGreyscaleImageData(imgData){
+  const out = new ImageData(new Uint8ClampedArray(imgData.data), imgData.width, imgData.height);
+  const d = out.data;
+  for (let i = 0; i < d.length; i += 4){
+    const lum = Math.round(0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2]);
+    d[i] = lum; d[i + 1] = lum; d[i + 2] = lum;
+  }
+  return out;
+}
+
 function smoothImageData(imgData, radiusPx){
   if (radiusPx <= 0) return imgData;
   const src = document.createElement('canvas');
@@ -1689,6 +1791,15 @@ function runTrace(){
         svgString = ImageTracer.imagedataToSVG(bwData, options);
         swatchList.innerHTML = '<span class="swatch-empty">Line art — single colour</span>';
       } else {
+        // Greyscale reuses this ENTIRE branch unchanged — palette, classification, despeckle,
+        // per-color overrides, group merging, colorCountAutoPending, all of it — just against a
+        // desaturated copy of the source pixels, so it naturally produces distinct grey shades
+        // with zero duplicated pipeline code. colorSource is what every color-identity-driving
+        // step below reads from; originalImageData itself (and its real RGB values) is untouched
+        // so switching back to Color or B&W mode still traces the real colors.
+        const isGreyscale = modeSelect.value === 'greyscale';
+        const colorSource = isGreyscale ? toGreyscaleImageData(originalImageData) : originalImageData;
+
         // Consumed once per freshly-loaded image, the first time it actually gets traced in
         // Color mode (which may not be the very first trace overall, since B&W is the default —
         // this stays pending until the user switches). Bails out before doing any of the actual
@@ -1697,20 +1808,21 @@ function runTrace(){
         if (colorCountAutoPending) {
           colorCountAutoPending = false;
           const priorColorCount = parseInt(colorCount.value);
-          const suggestedColorCount = Math.max(2, Math.min(32, estimateTrueColorCount(originalImageData, 24)));
+          const suggestedColorCount = Math.max(2, Math.min(32, estimateTrueColorCount(colorSource, 24)));
           if (suggestedColorCount !== priorColorCount) {
             colorCount.value = suggestedColorCount;
             colorCount.dispatchEvent(new Event('input'));
-            autoFixMessage = `Detected ${suggestedColorCount} distinct color${suggestedColorCount === 1 ? '' : 's'} in this image — Color count auto-set to ${suggestedColorCount}. Click "Reset Color Count to Default" to undo.`;
+            const noun = isGreyscale ? 'shade' : 'color';
+            autoFixMessage = `Detected ${suggestedColorCount} distinct ${noun}${suggestedColorCount === 1 ? '' : 's'} in this image — ${isGreyscale ? 'Grey levels' : 'Color count'} auto-set to ${suggestedColorCount}. Click "Reset Color Count to Default" to undo.`;
             return;
           }
         }
-        const workingData = upsampleImageData(originalImageData, superScale);
+        const workingData = upsampleImageData(colorSource, superScale);
         // Palette computed on the native-resolution source (color identity doesn't need
         // supersampling, only shape smoothness does) and then supplied directly to ImageTracer,
         // bypassing its own unreliable quantizer entirely.
         const requestedColors = parseInt(colorCount.value);
-        const palette = kMeansPalette(originalImageData, requestedColors, 12);
+        const palette = kMeansPalette(colorSource, requestedColors, 12);
         lastPalette = palette;
         const classes = classifyToPalette(workingData, palette);
 
@@ -2104,6 +2216,34 @@ function parseFillRgb(fillStr){
 // "match everything" and 0 means "exact color only" (same as the dedicated Color scope option).
 function toleranceSliderToDistance(v){ return (v / 100) * 441.7; }
 
+// Native-pixel-space scale factor for the currently rendered SVG — its viewBox is in supersampled
+// trace-space (see computeSuperScale), not native image pixels.
+function getViewBoxScale(svgEl){
+  const vb = (svgEl.getAttribute('viewBox') || '').split(/\s+/).map(Number);
+  const vbWidth = vb[2] || (originalImageData ? originalImageData.width : 1);
+  return (originalImageData ? originalImageData.width : vbWidth) / vbWidth;
+}
+// A path's center in native image-pixel space, accounting for its group's crop-offset transform
+// (Color mode wraps same-settings color groups in <g transform="translate(bx0,by0)">; B&W paths
+// have no such wrapper) — same offset-recovery approach as commitDeleteSelection's erase mask.
+function getPathNativeCenter(pathEl, scale){
+  const bbox = pathEl.getBBox();
+  const g = pathEl.closest('g[transform]');
+  let tx = 0, ty = 0;
+  if (g) {
+    const m = /translate\(([-\d.]+)[,\s]+([-\d.]+)\)/.exec(g.getAttribute('transform') || '');
+    if (m) { tx = parseFloat(m[1]); ty = parseFloat(m[2]); }
+  }
+  return { x: (bbox.x + bbox.width / 2 + tx) * scale, y: (bbox.y + bbox.height / 2 + ty) * scale };
+}
+// Tolerance's spatial reach: at slider 0, radius is 0 (moot — see the force-include-anchor logic
+// below); it grows to the full image diagonal by 100, i.e. "anywhere in the image" only becomes
+// reachable at the tolerance dial's extreme end, not its first notch above zero.
+function toleranceSliderToRadius(v){
+  const diag = originalImageData ? Math.sqrt(originalImageData.width ** 2 + originalImageData.height ** 2) : 0;
+  return (v / 100) * diag;
+}
+
 function computeDeleteMatches(anchorPath, scope, toleranceValue){
   const svgEl = svgHolder.querySelector('svg');
   const allPaths = svgEl ? Array.from(svgEl.querySelectorAll('path')) : [];
@@ -2122,15 +2262,31 @@ function computeDeleteMatches(anchorPath, scope, toleranceValue){
   // actual anchor path, then requiring OTHER paths to be STRICTLY closer than maxDist — so an
   // identical-color sibling only joins once tolerance is nudged above 0 (0 < maxDist), while the
   // anchor itself is never at the mercy of that comparison.
+  //
+  // Color distance ALONE still wasn't enough, though — confirmed directly on a real multi-shade
+  // illustration: any nonzero tolerance immediately swept in every shape sharing (or near) that
+  // color anywhere in the whole image, not just the few stray fragments actually near the clicked
+  // shape, because color distance has no idea what's spatially nearby versus just similarly
+  // colored somewhere unrelated. Gating on BOTH color distance AND on-canvas proximity (path
+  // center-to-center distance, scaled to the image's own diagonal so it works at any resolution)
+  // fixes that: a shape now needs to be both close in color and close in space, so the dial can
+  // grow gradually from "just this shape" through "nearby similar shades" before ever reaching
+  // "anywhere in the image," rather than jumping straight there on the first notch.
   const anchorColor = parseFillRgb(anchorPath.getAttribute('fill'));
   if (!anchorColor) return [anchorPath];
-  const maxDist = toleranceSliderToDistance(toleranceValue);
+  const maxColorDist = toleranceSliderToDistance(toleranceValue);
+  const maxRadius = toleranceSliderToRadius(toleranceValue);
+  const scale = getViewBoxScale(svgEl);
+  const anchorCenter = getPathNativeCenter(anchorPath, scale);
   return allPaths.filter(p => {
     if (p === anchorPath) return true;
     const c = parseFillRgb(p.getAttribute('fill'));
     if (!c) return false;
     const dr = c.r - anchorColor.r, dg = c.g - anchorColor.g, db = c.b - anchorColor.b;
-    return Math.sqrt(dr * dr + dg * dg + db * db) < maxDist;
+    if (Math.sqrt(dr * dr + dg * dg + db * db) >= maxColorDist) return false;
+    const center = getPathNativeCenter(p, scale);
+    const dx = center.x - anchorCenter.x, dy = center.y - anchorCenter.y;
+    return Math.sqrt(dx * dx + dy * dy) < maxRadius;
   });
 }
 
@@ -2189,6 +2345,22 @@ function commitDeleteSelection(){
     mctx.fill(new Path2D(p.getAttribute('d')));
     mctx.restore();
   });
+  // REVERTED (see dev notes at top of file for the full story): a blurred/soft-edged version of
+  // this mask was tried here to smooth the deletion boundary, but it only reduced ALPHA at the
+  // fringe while leaving the DELETED shape's own RGB in place there — so any fringe pixel whose
+  // alpha stayed above classifyToPalette's alpha<10 skip threshold (confirmed: most of a 2px-blur
+  // fringe does) still classified using the deleted color's stale RGB and got rendered at full
+  // opacity, producing a visible ghost of the color that was supposed to be gone, in place of the
+  // color that actually surrounds it. Confirmed directly on the real reference illustration: the
+  // faded fringe read back as (155,158,158) / (106,112,112) / (113,113,113) etc. — the deleted
+  // grey's own tones, not the black that genuinely surrounds it. Separately confirmed the plain
+  // hard mask below was never actually the source of the jagged/fragmented look that motivated
+  // this in the first place — that was entirely the stale-colorCount bug (see
+  // commitDeleteSelection's colorCountAutoPending re-arm above), already fixed independently, and
+  // already produced a clean result on the same real file with this exact plain hard mask. The
+  // existing despeckle/majority-vote pass every Color-mode trace already runs (see
+  // smoothingToDespeckleRadius / despeckleClasses) is what actually smooths a fresh deletion
+  // boundary — it doesn't need a second, custom smoothing step from the delete tool itself.
   const mask = mctx.getImageData(0, 0, maskCanvas.width, maskCanvas.height).data;
 
   // Optimistic removal for instant feedback — the real fix (erasing the source pixels below) is
@@ -2204,6 +2376,18 @@ function commitDeleteSelection(){
     if (mask[i] > 0) d[i] = 0;
   }
   ctx.putImageData(originalImageData, 0, 0); // keep the raster canvas in sync with originalImageData, like the freehand brush does
+
+  // Deleting a whole color's shapes changes the TRUE number of distinct colors left in the
+  // image, but Color count itself doesn't know that and stays at whatever it was — confirmed
+  // directly (real reference logo): deleting a 5th real color while colorCount stayed at 5 forced
+  // kMeansPalette to invent a spurious near-duplicate cluster to fill the now-unneeded slot
+  // (e.g. two orange shades one shade apart), and the classifier flickered between them pixel by
+  // pixel across what should have been one solid region — exploding a clean 32-path trace into
+  // 271 fragmented paths. Re-arming the same one-shot auto-detect used on fresh image loads lets
+  // the very next Color-mode trace correct colorCount back down (see runTrace's color branch)
+  // instead of leaving it stale. Harmless to set even in B&W mode or when nothing needs
+  // correcting — same no-op-if-already-right guard as the fresh-load case.
+  colorCountAutoPending = true;
 
   cancelDeleteSelection();
   if (autoRevectorizeCheckbox.checked) scheduleTrace();
