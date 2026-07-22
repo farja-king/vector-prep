@@ -609,6 +609,14 @@ let pristineImageData = null; // untouched backup for the Restore brush and Rese
 let brushUndoStack = []; // snapshots of originalImageData.data taken before each stroke
 let traceTimeout = null;
 
+// Set true right after a fresh image load, consumed by the first B&W trace that follows it.
+// Scoped narrowly to that one trace so it never fights the user while they're deliberately
+// tuning sliders afterward, and never touches Detail settings (simplify/speckle/smoothing) —
+// only Threshold/Invert, since those are the only two settings that can make a B&W trace come
+// back completely empty (see runTrace's blank-trace check below).
+let autoFixPending = false;
+let autoFixMessage = '';
+
 // Maps the 0-8000 slider to an ltres/qtres error threshold of 0.02-40 — widened again from
 // 0.02-20 for a busier real-world graphic that needed more headroom on all the Detail controls.
 // Slider steps scale up proportionally so per-notch sensitivity stays the same as before.
@@ -724,6 +732,8 @@ function loadImageFile(file){
       dimsEl.textContent = canvas.width + ' × ' + canvas.height;
       setView(false);
       fitZoomToContainer();
+      autoFixPending = true;
+      autoFixMessage = '';
       scheduleTrace(0);
     };
     img.src = e.target.result;
@@ -746,6 +756,8 @@ document.getElementById('reset').addEventListener('click', () => {
   brushModeSelect.dispatchEvent(new Event('change'));
   lastSvgString = '';
   lastPalette = [];
+  autoFixPending = false;
+  autoFixMessage = '';
   colorOverrides = {};
   selectedColorIndex = null;
   colorOverridePanel.style.display = 'none';
@@ -1753,9 +1765,48 @@ function runTrace(){
       }
       renderZoomSize();
       const pathMatches = svgString.match(/<path/g);
-      pathCountEl.textContent = (pathMatches ? pathMatches.length : 0) + ' paths';
+      const thisPathCount = pathMatches ? pathMatches.length : 0;
+      pathCountEl.textContent = thisPathCount + ' paths';
       svgSizeEl.textContent = (new Blob([svgString]).size / 1024).toFixed(1) + ' KB';
-      traceStatus.textContent = '';
+
+      // A B&W trace that comes back with no VISIBLE paths on a fresh image load almost always
+      // means the fixed default Threshold (70) doesn't fall inside this particular image's tonal
+      // range — not that anything is broken. Rather than always auto-running the full "Suggest
+      // Settings" (which also touches Detail sliders tuned to work well as-is and can overcorrect
+      // on images that were already fine), only nudge the two settings that can actually cause a
+      // total blank: Threshold and Invert. If the Otsu-derived guess doesn't actually change
+      // either of those, an auto-retry would just reproduce the same blank result, so leave it
+      // alone and surface the message instead.
+      //
+      // Raw path count alone isn't a reliable "is anything showing" signal: ImageTracer always
+      // emits one fully-transparent background rect (fill white, opacity="0") even when the real
+      // foreground colour produced zero shapes, so a genuinely blank trace still reports "1 path"
+      // — confirmed directly by loading a light-foreground test image, which came back with
+      // pathCount 1 and a single opacity="0" rect as its only content. Filtering those out is
+      // what actually distinguishes "nothing traced" from "one real tiny shape traced".
+      if (isBw && autoFixPending) {
+        autoFixPending = false;
+        const visiblePathCount = (svgString.match(/<path[^>]*>/g) || [])
+          .filter(p => !/opacity="0"/.test(p)).length;
+        if (visiblePathCount === 0) {
+          const priorThreshold = parseInt(threshold.value);
+          const priorInvert = invert.checked;
+          const a = analyzeImage(originalImageData);
+          const suggestedThreshold = a.otsu;
+          const suggestedInvert = a.cornerBrightness < 110;
+          if (suggestedThreshold !== priorThreshold || suggestedInvert !== priorInvert) {
+            threshold.value = suggestedThreshold;
+            threshold.dispatchEvent(new Event('input'));
+            invert.checked = suggestedInvert;
+            invert.dispatchEvent(new Event('change'));
+            autoFixMessage = `No shapes found at threshold ${priorThreshold} — auto-adjusted to ${suggestedThreshold}${suggestedInvert !== priorInvert ? ' + inverted' : ''}. Click "Reset Trace Mode to Defaults" to undo.`;
+            return;
+          }
+          autoFixMessage = 'No shapes found in this image at the current Threshold/Invert — try ✨ Suggest Settings.';
+        }
+      }
+      traceStatus.textContent = autoFixMessage;
+      autoFixMessage = '';
     } catch (e) {
       console.error(e);
       traceStatus.textContent = 'Trace failed — try a smaller image or different settings.';
