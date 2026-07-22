@@ -122,6 +122,28 @@
     padding:14px;
     position:relative;
   }
+  .processing-overlay{
+    display:none;
+    position:absolute;
+    top:24px; right:24px;
+    background:var(--ink);
+    color:var(--white);
+    font-family:'IBM Plex Mono',monospace;
+    font-size:12px;
+    font-weight:600;
+    text-transform:uppercase;
+    letter-spacing:.06em;
+    padding:8px 14px;
+    border:1px solid var(--thread-red);
+    z-index:30;
+    box-shadow:0 2px 8px rgba(0,0,0,.25);
+    animation:processingPulse 1.1s ease-in-out infinite;
+  }
+  .processing-overlay.show{display:block;}
+  @keyframes processingPulse{
+    0%, 100% { opacity:1; }
+    50% { opacity:.55; }
+  }
   .canvas-panel .label{
     font-family:'IBM Plex Mono',monospace;
     font-size:11px;
@@ -336,6 +358,7 @@
   <div class="stage" id="stage">
     <div class="canvas-container">
       <div class="canvas-panel">
+        <div class="processing-overlay" id="processingOverlay">⏳ Processing…</div>
         <div class="label">
           <span>Preview</span>
           <div style="display:flex; gap:14px; align-items:center;">
@@ -407,25 +430,25 @@
         <div class="slider-row">
           <div class="slider-col">
             <label>Curve smoothing (higher = smoother; very low values trace the raw pixel staircase instead of fitting a curve)</label>
-            <input type="range" id="simplify" min="0" max="4000" value="438">
+            <input type="range" id="simplify" min="0" max="8000" value="438">
           </div>
-          <input type="number" class="num-input" id="simplifyNum" min="0.02" max="20" step="0.01" value="2.21">
+          <input type="number" class="num-input" id="simplifyNum" min="0.02" max="40" step="0.01" value="2.21">
         </div>
 
         <div class="slider-row">
           <div class="slider-col">
             <label>Speckle removal</label>
-            <input type="range" id="speckle" min="0" max="64" value="3">
+            <input type="range" id="speckle" min="0" max="200" value="3">
           </div>
-          <input type="number" class="num-input" id="speckleNum" min="0" max="64" step="1" value="3">
+          <input type="number" class="num-input" id="speckleNum" min="0" max="200" step="1" value="3">
         </div>
 
         <div class="slider-row">
           <div class="slider-col">
             <label>Edge smoothing / blur (a blunter, coarser tool than Curve smoothing above — push that one up first for jagged edges)</label>
-            <input type="range" id="smoothing" min="0" max="20" step="0.1" value="0.9">
+            <input type="range" id="smoothing" min="0" max="40" step="0.1" value="0.9">
           </div>
-          <input type="number" class="num-input" id="smoothingNum" min="0" max="20" step="0.1" value="0.9">
+          <input type="number" class="num-input" id="smoothingNum" min="0" max="40" step="0.1" value="0.9">
         </div>
 
         <label style="font-size:11px; color:#8a8578; display:block; margin-top:4px;">
@@ -447,23 +470,23 @@
           <div class="slider-row">
             <div class="slider-col">
               <label>Curve fit</label>
-              <input type="range" id="overrideCurveFit" min="0.02" max="20" step="0.01" value="2.21">
+              <input type="range" id="overrideCurveFit" min="0.02" max="40" step="0.01" value="2.21">
             </div>
-            <input type="number" class="num-input" id="overrideCurveFitNum" min="0.02" max="20" step="0.01" value="2.21">
+            <input type="number" class="num-input" id="overrideCurveFitNum" min="0.02" max="40" step="0.01" value="2.21">
           </div>
           <div class="slider-row">
             <div class="slider-col">
               <label>Edge smoothing</label>
-              <input type="range" id="overrideEdgeSmoothing" min="0" max="20" step="0.1" value="5">
+              <input type="range" id="overrideEdgeSmoothing" min="0" max="40" step="0.1" value="5">
             </div>
-            <input type="number" class="num-input" id="overrideEdgeSmoothingNum" min="0" max="20" step="0.1" value="5">
+            <input type="number" class="num-input" id="overrideEdgeSmoothingNum" min="0" max="40" step="0.1" value="5">
           </div>
           <div class="slider-row">
             <div class="slider-col">
               <label>Speckle removal</label>
-              <input type="range" id="overrideSpeckle" min="0" max="64" step="1" value="3">
+              <input type="range" id="overrideSpeckle" min="0" max="200" step="1" value="3">
             </div>
-            <input type="number" class="num-input" id="overrideSpeckleNum" min="0" max="64" step="1" value="3">
+            <input type="number" class="num-input" id="overrideSpeckleNum" min="0" max="200" step="1" value="3">
           </div>
           <div style="margin-top:8px; padding-top:8px; border-top:1px solid var(--paper-line);">
             <div class="slider-row">
@@ -521,7 +544,11 @@
         <input type="range" id="brushSize" min="4" max="150" value="30">
         <div style="height:8px"></div>
         <button class="action ghost" id="brushUndo" style="margin-bottom:6px;">Undo Last Stroke</button>
-        <button class="action ghost" id="brushResetAll">Reset All Touch-ups</button>
+        <button class="action ghost" id="brushResetAll" style="margin-bottom:12px;">Reset All Touch-ups</button>
+        <label style="font-size:11px; color:#8a8578; display:block; margin-bottom:8px;">
+          <input type="checkbox" id="autoRevectorize" checked> Auto re-vectorize after each stroke
+        </label>
+        <button class="action" id="revectorizeNow">Re-vectorize Now</button>
       </div>
 
       <div class="tool-block">
@@ -552,6 +579,7 @@ const dimsEl = document.getElementById('dims');
 const pathCountEl = document.getElementById('pathCount');
 const svgSizeEl = document.getElementById('svgSize');
 const traceStatus = document.getElementById('traceStatus');
+const processingOverlay = document.getElementById('processingOverlay');
 const swatchList = document.getElementById('swatchList');
 const paletteBlock = document.getElementById('paletteBlock');
 
@@ -581,16 +609,14 @@ let pristineImageData = null; // untouched backup for the Restore brush and Rese
 let brushUndoStack = []; // snapshots of originalImageData.data taken before each stroke
 let traceTimeout = null;
 
-// Maps the 0-4000 slider to an ltres/qtres error threshold of 0.02-20 — widened again from
-// 0.02-10, since pushing curve smoothing near its ceiling keeps being exactly the right move for
-// lettering/logos (it's what actually drives curve-fitting, not the blur/speckle controls) and
-// there was still no headroom left. Slider steps scale up proportionally so per-notch sensitivity
-// stays the same as before across the low end.
+// Maps the 0-8000 slider to an ltres/qtres error threshold of 0.02-40 — widened again from
+// 0.02-20 for a busier real-world graphic that needed more headroom on all the Detail controls.
+// Slider steps scale up proportionally so per-notch sensitivity stays the same as before.
 function simplifyToTres(sliderVal){
-  return 0.02 + (sliderVal / 4000) * 19.98;
+  return 0.02 + (sliderVal / 8000) * 39.98;
 }
 function tresToSimplify(tres){
-  return Math.round(((tres - 0.02) / 19.98) * 4000);
+  return Math.round(((tres - 0.02) / 39.98) * 8000);
 }
 
 function setView(showVector){
@@ -1550,6 +1576,7 @@ function classesToImageData(classes, pal, width, height){
 function runTrace(){
   if (!originalImageData || typeof ImageTracer === 'undefined') return;
   traceStatus.textContent = 'Tracing…';
+  processingOverlay.classList.add('show');
 
   // setTimeout, not requestAnimationFrame — rAF is fully paused on a backgrounded/inactive tab,
   // which would leave a trace started right before a tab-switch stuck at "Tracing…" forever.
@@ -1732,6 +1759,8 @@ function runTrace(){
     } catch (e) {
       console.error(e);
       traceStatus.textContent = 'Trace failed — try a smaller image or different settings.';
+    } finally {
+      processingOverlay.classList.remove('show');
     }
   });
 }
@@ -1890,12 +1919,18 @@ canvas.addEventListener('mousemove', e => {
   const { x, y } = eventToImageCoords(e);
   paintStrokeAt(x, y);
 });
+const autoRevectorizeCheckbox = document.getElementById('autoRevectorize');
 function endBrushStroke(){
   if (!brushActive) return;
   brushActive = false;
   originalImageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-  scheduleTrace();
+  // With auto re-vectorize off, strokes just accumulate on the raster canvas (still visible in
+  // Source view) without a full retrace after every single one — useful on a busy image where
+  // retracing after each stroke is slow enough to get in the way of painting several touch-ups
+  // in a row. "Re-vectorize Now" (or turning auto back on) catches it up whenever you're ready.
+  if (autoRevectorizeCheckbox.checked) scheduleTrace();
 }
+document.getElementById('revectorizeNow').addEventListener('click', () => scheduleTrace(0));
 canvas.addEventListener('mouseup', endBrushStroke);
 canvas.addEventListener('mouseleave', endBrushStroke);
 
