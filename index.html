@@ -206,6 +206,7 @@
   #svgHolder svg{display:block;}
   #svgHolder.delete-active path{cursor:pointer;}
   #svgHolder.delete-active path:hover{opacity:.55; outline:1px dashed var(--thread-red); outline-offset:1px;}
+  #svgHolder.delete-active path.delete-selected{opacity:.4; outline:2px solid var(--thread-red); outline-offset:1px;}
 
   .tools{display:flex; flex-direction:column; gap:14px;}
   .tool-block{background:var(--white); border:1px solid var(--ink); padding:14px;}
@@ -526,14 +527,13 @@
 
       <div class="tool-block">
         <h3><span class="n">03</span> Touch-up brush</h3>
-        <p class="hint">Freehand modes paint directly onto the source pixels and switch to Source view automatically. Click-delete works in Vector view, on the traced shapes themselves.</p>
+        <p class="hint">Paints directly onto the source pixels (Source view), so edits get traced properly instead of sitting on top as a raster patch. Switches to Source view automatically.</p>
         <div class="row" style="margin-bottom:12px;">
           <select id="brushMode">
             <option value="off">Off</option>
             <option value="erase">Erase (remove)</option>
             <option value="restore">Restore (undo to original)</option>
             <option value="paint">Paint (custom color)</option>
-            <option value="clickDelete">Click-delete (path/color)</option>
           </select>
         </div>
         <div id="brushPaintControls" style="display:none;">
@@ -543,19 +543,8 @@
           </div>
           <button class="action ghost" id="eyedropperBtn" style="margin-bottom:12px;">🎨 Pick Color From Image</button>
         </div>
-        <div id="brushClickDeleteControls" style="display:none; margin-bottom:12px;">
-          <p class="hint" style="margin-top:0;">Click a shape in the Vector preview to delete it. Deletions erase the underlying source pixels, so they survive re-tracing and stay gone if you change settings afterward.</p>
-          <div class="row">
-            <select id="clickDeleteScope">
-              <option value="shape">Delete this shape only</option>
-              <option value="color">Delete every shape of this color</option>
-            </select>
-          </div>
-        </div>
-        <div id="brushSizeRow">
-          <label style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:#8a8578;">Brush size — <span id="brushSizeVal">30</span>px</label>
-          <input type="range" id="brushSize" min="4" max="150" value="30">
-        </div>
+        <label style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:#8a8578;">Brush size — <span id="brushSizeVal">30</span>px</label>
+        <input type="range" id="brushSize" min="4" max="150" value="30">
         <div style="height:8px"></div>
         <button class="action ghost" id="brushUndo" style="margin-bottom:6px;">Undo Last Stroke</button>
         <button class="action ghost" id="brushResetAll" style="margin-bottom:12px;">Reset All Touch-ups</button>
@@ -566,7 +555,36 @@
       </div>
 
       <div class="tool-block">
-        <h3><span class="n">04</span> Export</h3>
+        <h3><span class="n">04</span> Delete shapes</h3>
+        <p class="hint">Click a shape in the Vector preview to select it (and, at Tolerance scope, every similarly-colored shape near it), then click it again — or press Delete Selected — to remove it. Erases the underlying source pixels, so deletions survive re-tracing. Switches to Vector view automatically.</p>
+        <div class="row" style="margin-bottom:12px;">
+          <select id="deleteScope">
+            <option value="off">Off</option>
+            <option value="shape">Delete this shape only</option>
+            <option value="color">Delete every shape of this exact color</option>
+            <option value="tolerance">Delete similar shades (tolerance)</option>
+          </select>
+        </div>
+        <div id="deleteToleranceRow" style="display:none; margin-bottom:12px;">
+          <div class="slider-row">
+            <div class="slider-col">
+              <label>Color tolerance</label>
+              <input type="range" id="deleteTolerance" min="0" max="100" value="15">
+            </div>
+            <input type="number" class="num-input" id="deleteToleranceNum" min="0" max="100" step="1" value="15">
+          </div>
+        </div>
+        <div id="deleteSelectionActions" style="display:none; margin-bottom:12px;">
+          <div class="meta" style="margin-bottom:8px; justify-content:flex-start;"><span id="deleteSelectionSummary"></span></div>
+          <button class="action" id="deleteConfirm" style="margin-bottom:6px;">Delete Selected</button>
+          <button class="action ghost" id="deleteCancel">Cancel Selection</button>
+        </div>
+        <button class="action ghost" id="deleteUndoLast" style="margin-bottom:6px;">Undo Last Delete</button>
+        <button class="action ghost" id="deleteResetAll">Reset All Touch-ups</button>
+      </div>
+
+      <div class="tool-block">
+        <h3><span class="n">05</span> Export</h3>
         <button class="action" id="downloadSvg" style="margin-bottom:8px;">Download SVG</button>
         <button class="action ghost" id="downloadPng">Download PNG Preview</button>
         <div id="traceStatus" style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:#8a8578;margin-top:8px;min-height:14px;"></div>
@@ -1960,23 +1978,19 @@ function ensurePristineCanvas(){
   return pristineCanvas;
 }
 
-const brushClickDeleteControls = document.getElementById('brushClickDeleteControls');
-const brushSizeRow = document.getElementById('brushSizeRow');
-const clickDeleteScope = document.getElementById('clickDeleteScope');
-
 brushModeSelect.addEventListener('change', () => {
-  const mode = brushModeSelect.value;
-  brushPaintControls.style.display = mode === 'paint' ? 'block' : 'none';
-  brushClickDeleteControls.style.display = mode === 'clickDelete' ? 'block' : 'none';
-  brushSizeRow.style.display = mode === 'clickDelete' ? 'none' : 'block'; // brush size is meaningless when deleting whole traced shapes by click
-  canvas.classList.toggle('brush-active', mode !== 'off' && mode !== 'clickDelete');
-  svgHolder.classList.toggle('delete-active', mode === 'clickDelete');
-  if (mode === 'clickDelete' && originalImageData){
-    setView(true); // click-delete targets rendered <path> elements, which only exist in Vector view
-    renderZoomSize();
-  } else if (mode !== 'off' && originalImageData){
-    setView(false); // freehand modes paint on the raster, so force Source view
-    renderZoomSize();
+  brushPaintControls.style.display = brushModeSelect.value === 'paint' ? 'block' : 'none';
+  canvas.classList.toggle('brush-active', brushModeSelect.value !== 'off');
+  if (brushModeSelect.value !== 'off'){
+    // Freehand and Delete-shapes are two separate, mutually-exclusive tools — each needs a
+    // different view (Source vs Vector), so activating one always turns the other off rather
+    // than leaving both "on" with no coherent shared view to show.
+    deleteScopeSelect.value = 'off';
+    deleteScopeSelect.dispatchEvent(new Event('change'));
+    if (originalImageData){
+      setView(false); // brush paints on the raster, so force Source view
+      renderZoomSize();
+    }
   }
 });
 brushSizeInput.addEventListener('input', () => { brushSizeVal.textContent = brushSizeInput.value; });
@@ -2064,25 +2078,86 @@ canvas.addEventListener('click', e => {
   brushModeSelect.dispatchEvent(new Event('change'));
 });
 
-// Click-delete: erases the SOURCE pixels behind a clicked traced shape (not just the SVG
-// element), reusing the exact same brushUndoStack / "Undo Last Stroke" / "Reset All Touch-ups"
-// machinery as the freehand brush above — so a deletion survives the next re-trace (unlike
-// removing the <path> from the DOM alone, which the very next scheduleTrace() would silently
-// regenerate from the untouched original pixels) and gets the same one-click-per-step undo the
-// freehand strokes already have, with zero new undo UI needed.
-svgHolder.addEventListener('click', e => {
-  if (brushModeSelect.value !== 'clickDelete' || !originalImageData) return;
-  const pathEl = e.target.closest('path');
-  const svgEl = svgHolder.querySelector('svg');
-  if (!pathEl || !svgEl) return;
+// ---- Delete shapes (separate tool from the freehand brush above, own section/dropdown) ----
+// Two-step select-then-confirm flow: click picks an anchor shape and highlights every path that
+// currently matches the chosen scope (just that shape / its exact color / similar shades within
+// a tolerance you can drag live); nothing is touched yet. A second click on the same selection —
+// or the Delete Selected button — commits it. This mirrors the freehand brush's approach exactly:
+// the actual delete erases SOURCE pixels (not just the <path> elements), reusing the same
+// brushUndoStack / "Undo Last Stroke" / "Reset All Touch-ups" machinery, so it survives the next
+// re-trace and gets the same undo for free.
+const deleteScopeSelect = document.getElementById('deleteScope');
+const deleteToleranceRow = document.getElementById('deleteToleranceRow');
+const deleteTolerance = document.getElementById('deleteTolerance');
+const deleteToleranceNum = document.getElementById('deleteToleranceNum');
+const deleteSelectionActions = document.getElementById('deleteSelectionActions');
+const deleteSelectionSummary = document.getElementById('deleteSelectionSummary');
 
-  const targets = [pathEl];
-  if (clickDeleteScope.value === 'color') {
-    const fillVal = pathEl.getAttribute('fill');
-    svgEl.querySelectorAll('path').forEach(p => {
-      if (p !== pathEl && p.getAttribute('fill') === fillVal) targets.push(p);
-    });
+let pendingDeleteSelection = null; // { anchor: <path>, matched: [<path>, ...] }
+
+function parseFillRgb(fillStr){
+  const m = /rgb\((\d+),\s*(\d+),\s*(\d+)\)/.exec(fillStr || '');
+  return m ? { r: +m[1], g: +m[2], b: +m[3] } : null;
+}
+// Slider is a friendlier 0-100 rather than exposing the raw RGB distance metric directly; 441.7 is
+// the maximum possible Euclidean distance between two RGB colors (sqrt(255^2 * 3)), so 100 means
+// "match everything" and 0 means "exact color only" (same as the dedicated Color scope option).
+function toleranceSliderToDistance(v){ return (v / 100) * 441.7; }
+
+function computeDeleteMatches(anchorPath, scope, toleranceValue){
+  const svgEl = svgHolder.querySelector('svg');
+  const allPaths = svgEl ? Array.from(svgEl.querySelectorAll('path')) : [];
+  if (scope === 'shape') return [anchorPath];
+  if (scope === 'color') {
+    const fillVal = anchorPath.getAttribute('fill');
+    return allPaths.filter(p => p.getAttribute('fill') === fillVal);
   }
+  // tolerance — at slider 0 this must mean "just the shape I clicked", not "every shape sharing
+  // its exact color" (that's what the separate Color scope option is for). A plain <= distance
+  // check doesn't give that: two DIFFERENT shapes with identical fill color sit at distance 0
+  // from each other, so at maxDist 0 they'd still match (0 <= 0), silently reproducing Color
+  // scope's behavior right at the tolerance dial's minimum instead of starting from "just this
+  // one" and growing outward — confirmed directly: at tolerance 0 on a multi-region illustration,
+  // this selected 7 shapes (every same-shade region), not 1. Fixed by always force-including the
+  // actual anchor path, then requiring OTHER paths to be STRICTLY closer than maxDist — so an
+  // identical-color sibling only joins once tolerance is nudged above 0 (0 < maxDist), while the
+  // anchor itself is never at the mercy of that comparison.
+  const anchorColor = parseFillRgb(anchorPath.getAttribute('fill'));
+  if (!anchorColor) return [anchorPath];
+  const maxDist = toleranceSliderToDistance(toleranceValue);
+  return allPaths.filter(p => {
+    if (p === anchorPath) return true;
+    const c = parseFillRgb(p.getAttribute('fill'));
+    if (!c) return false;
+    const dr = c.r - anchorColor.r, dg = c.g - anchorColor.g, db = c.b - anchorColor.b;
+    return Math.sqrt(dr * dr + dg * dg + db * db) < maxDist;
+  });
+}
+
+function clearDeleteHighlights(){
+  svgHolder.querySelectorAll('path.delete-selected').forEach(p => p.classList.remove('delete-selected'));
+}
+function updateDeleteSelectionSummary(count){
+  deleteSelectionSummary.textContent = count + (count === 1 ? ' shape selected' : ' shapes selected');
+}
+function startDeleteSelection(anchorPath){
+  clearDeleteHighlights();
+  const matched = computeDeleteMatches(anchorPath, deleteScopeSelect.value, parseFloat(deleteTolerance.value));
+  matched.forEach(p => p.classList.add('delete-selected'));
+  pendingDeleteSelection = { anchor: anchorPath, matched };
+  deleteSelectionActions.style.display = 'block';
+  updateDeleteSelectionSummary(matched.length);
+}
+function cancelDeleteSelection(){
+  clearDeleteHighlights();
+  pendingDeleteSelection = null;
+  deleteSelectionActions.style.display = 'none';
+}
+function commitDeleteSelection(){
+  if (!pendingDeleteSelection || !originalImageData) return;
+  const targets = pendingDeleteSelection.matched;
+  const svgEl = svgHolder.querySelector('svg');
+  if (!svgEl) { cancelDeleteSelection(); return; }
 
   // The SVG's viewBox is in supersampled trace-space (see computeSuperScale), not native image
   // pixels — reading it directly off the live element rather than recomputing superScale keeps
@@ -2130,8 +2205,66 @@ svgHolder.addEventListener('click', e => {
   }
   ctx.putImageData(originalImageData, 0, 0); // keep the raster canvas in sync with originalImageData, like the freehand brush does
 
+  cancelDeleteSelection();
   if (autoRevectorizeCheckbox.checked) scheduleTrace();
+}
+
+deleteScopeSelect.addEventListener('change', () => {
+  const scope = deleteScopeSelect.value;
+  deleteToleranceRow.style.display = scope === 'tolerance' ? 'block' : 'none';
+  svgHolder.classList.toggle('delete-active', scope !== 'off');
+  cancelDeleteSelection(); // a scope change invalidates whatever was previously matched
+  if (scope !== 'off'){
+    // Freehand and Delete-shapes are two separate, mutually-exclusive tools — see the matching
+    // comment on brushModeSelect's handler above.
+    brushModeSelect.value = 'off';
+    brushModeSelect.dispatchEvent(new Event('change'));
+    if (originalImageData){
+      setView(true); // click-delete targets rendered <path> elements, which only exist in Vector view
+      renderZoomSize();
+    }
+  }
 });
+
+// Re-highlights live as the tolerance is dragged, without needing a fresh click — lets you widen
+// or narrow the selection and see exactly what you're about to delete before committing.
+deleteTolerance.addEventListener('input', () => {
+  deleteToleranceNum.value = deleteTolerance.value;
+  if (pendingDeleteSelection && deleteScopeSelect.value === 'tolerance') {
+    const matched = computeDeleteMatches(pendingDeleteSelection.anchor, 'tolerance', parseFloat(deleteTolerance.value));
+    clearDeleteHighlights();
+    matched.forEach(p => p.classList.add('delete-selected'));
+    pendingDeleteSelection.matched = matched;
+    updateDeleteSelectionSummary(matched.length);
+  }
+});
+deleteToleranceNum.addEventListener('input', () => {
+  let v = Math.max(0, Math.min(100, parseFloat(deleteToleranceNum.value) || 0));
+  deleteTolerance.value = v;
+  deleteTolerance.dispatchEvent(new Event('input'));
+});
+
+svgHolder.addEventListener('click', e => {
+  if (deleteScopeSelect.value === 'off' || !originalImageData) return;
+  const pathEl = e.target.closest('path');
+  if (!pathEl) return;
+
+  // Clicking the anchor again, or any already-highlighted match, confirms the pending delete —
+  // this is the "click again to delete" shortcut. Clicking a path outside the current selection
+  // instead starts a new selection anchored there, so re-aiming never requires an explicit cancel.
+  if (pendingDeleteSelection && (pathEl === pendingDeleteSelection.anchor || pendingDeleteSelection.matched.includes(pathEl))) {
+    commitDeleteSelection();
+    return;
+  }
+  startDeleteSelection(pathEl);
+});
+document.getElementById('deleteConfirm').addEventListener('click', commitDeleteSelection);
+document.getElementById('deleteCancel').addEventListener('click', cancelDeleteSelection);
+// Undo Last Delete / Reset All Touch-ups (Delete shapes section) share the exact same undo stack
+// and pristine-image restore as the freehand brush's buttons — delegating to those rather than
+// duplicating the logic keeps both sections' history in perfect sync no matter which tool you used.
+document.getElementById('deleteUndoLast').addEventListener('click', () => document.getElementById('brushUndo').click());
+document.getElementById('deleteResetAll').addEventListener('click', () => document.getElementById('brushResetAll').click());
 
 document.getElementById('brushUndo').addEventListener('click', () => {
   if (brushUndoStack.length === 0 || !originalImageData) return;
