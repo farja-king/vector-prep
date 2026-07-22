@@ -54,8 +54,8 @@
      real detail, starving the filter and silently falling back to unfiltered (anti-aliasing-noise-
      contaminated) sampling on exactly the images that most needed the filter. Now uses a fixed 2px
      check, matching estimateTrueColorCount's own (already-correct) call.
-  9. Delete-shapes edge quality, three rounds on the same spot — TRIED and REVERTED twice before
-     landing on what's actually in the code now:
+  9. Delete-shapes edge quality — FOUR rounds on the same spot, all reverted, settled back on the
+     plain hard erase (binary alpha cut, no recolor). Full history, so nobody re-attempts these:
      - Round 1 (blend+fade fringe RGB, varying alpha): broken — classifyToPalette/classesToImageData
        ignore partial alpha entirely (anything above alpha 10 renders fully OPAQUE), so the "fade"
        never rendered soft, it just baked in solid blotches of whatever the ring math computed.
@@ -67,14 +67,21 @@
        Root cause: the erase mask IS naturally anti-aliased by the canvas fill (real partial-coverage
        values), but `if (mask[i] > 0) d[i] = 0` collapsed any nonzero coverage into a full erase,
        throwing that sub-pixel curve shape away and re-quantizing the boundary into a staircase.
-     - Round 3 (current): reduce alpha PROPORTIONALLY to the mask's real coverage (preserves the
-       curve's sub-pixel shape) AND recolor every touched pixel to its one nearest real neighbor's
-       exact RGB (never blended). Confirmed a major improvement on the real Cobra reference file
-       (see below) but a small remaining rough patch was seen at one junction where the hole
-       touched more than one real color at once — not fully re-verified after the auto-revectorize
-       fix below (that fix was what turned out to be showing STALE pre-edit traces half the time,
-       so some earlier "still jagged" observations in this round may have been that, not this).
-       Needs a clean re-test.
+     - Round 3 (proportional alpha reduction matching the mask's real coverage + recolor every
+       touched pixel to its one nearest real neighbor's exact RGB, never blended): looked like a big
+       improvement in isolated screenshots, but that was largely an illusion — the auto-revectorize-
+       off default meant most of what looked "clean" was actually a STALE pre-delete trace never
+       having been re-run at all, not genuinely fixed edges. Once auto-revectorize was removed
+       (point 10) and every view/export started forcing a real retrace, the SAME corruption/jagged
+       edges came right back on every export — confirmed directly: exports were reproducing the
+       exact artifact this round was meant to fix, because the retrace itself was still broken, not
+       just hidden by never running it.
+     - Round 4 (current): reverted to the plain hard erase — `if (mask[i] > 0) d[i] = 0`, nothing
+       else. This is the only version ever confirmed clean on a real file. Deletions now have a hard
+       pixel-edge boundary instead of a smooth one — accepted tradeoff after four attempts at smooth
+       edges all either corrupted colors or turned out to be a stale-preview illusion. Don't
+       re-attempt fringe smoothing here without a way to test against a real file independent of
+       screenshots (Round 3's false-positive came directly from not being able to do that).
   10. Removed the "Auto re-vectorize after each stroke" checkbox entirely (Touch-up brush + Delete
       shapes both used it). It defaulted ON, but whenever a session had it off, edits (brush strokes,
       deletes) updated originalImageData immediately while the Vector preview AND lastSvgString (what
@@ -84,6 +91,29 @@
       a new `needsRetrace` flag (set on every edit, cleared when a trace completes) makes the
       Download SVG/PNG handlers force-and-await a fresh trace first if pixels have changed since the
       last one — so an export can no longer go stale regardless of what the user clicked.
+  11. The ACTUAL root cause of deletions intermittently/consistently missing from exports (point 10
+      above was a real fix for a related but different problem — this is the one that mattered most).
+      Two things landed together, found by scripting a real repro directly (loading the real Cobra
+      file via loadImageFile in a live page and driving the actual functions — screenshots alone had
+      already led to two wrong diagnoses in a row, see traceGeneration below):
+      - Added `traceGeneration`: runTrace's Color/Greyscale branch yields mid-trace on purpose (see
+        point 9), so calls can overlap; without a guard, an OLDER call finishing AFTER a newer one
+        could silently overwrite lastSvgString with a stale result. Every edit (delete, brush stroke)
+        now calls `invalidateInFlightTrace()`, which bumps traceGeneration immediately (not just when
+        a replacement trace actually starts) so any in-flight trace recognizes itself as stale the
+        moment it tries to commit, and only the latest generation is allowed to write results.
+      - The REAL bug: deleting a whole color re-arms colorCountAutoPendingByMode (correctly — the
+        true remaining count changed). But runTrace's handling of that used to set colorCount.value,
+        dispatch 'input' on it (which only SCHEDULES a separate, debounced follow-up trace), and
+        `return` — leaving THIS call's own lastSvgString commit undone. ensureFreshTrace's
+        `await runTrace()` only awaits that one truncated call; its finally block still cleared
+        needsRetrace as if the job were done, while the real corrected trace was sitting in an
+        un-awaited 250ms debounce Download never waited for. Confirmed directly: after deleting a
+        color (8 -> 7), lastSvgString still contained the deleted color and needsRetrace was already
+        false. Fixed by applying the corrected colorCount and continuing within the SAME call instead
+        of bailing out and relying on a second async trace to catch up — verified by scripting the
+        exact repro (delete both green shades on the real Cobra file, force a fresh trace, assert the
+        deleted colors are absent from lastSvgString) before and after the fix.
 
   INTENTIONAL BEHAVIOR, NOT BUGS:
   - Deleting a shape leaves a TRANSPARENT hole, not a fill of the surrounding color. Explicitly
@@ -760,6 +790,23 @@ let traceTimeout = null;
 // can never silently omit an edit that just hadn't been manually re-vectorized yet — which is
 // exactly how a deleted shape previously reappeared in a downloaded SVG.
 let needsRetrace = false;
+
+// Marks the source pixels as changed. This must do MORE than just set needsRetrace = true: if a
+// trace was already running when the edit happened (e.g. the automatic retrace triggered by
+// entering Delete-shapes mode), that trace read/upsampled pixel data from BEFORE this edit, and if
+// nothing else starts a newer trace before it finishes, it's still technically "the latest
+// generation" — so it would go ahead and commit its (now stale) pre-edit result, AND clear
+// needsRetrace in its finally block, silently erasing the very flag that was supposed to tell
+// Download a retrace was still needed. Confirmed as the actual cause of a delete surviving on
+// screen but reverting to the untouched source in the exported file: the in-flight trace from
+// entering delete mode finished after the delete and quietly won. Bumping traceGeneration here
+// (not just when a NEW trace starts) makes any currently-in-flight trace recognize itself as
+// stale the moment it tries to commit, regardless of whether a replacement trace has actually
+// been kicked off yet.
+function invalidateInFlightTrace(){
+  traceGeneration++;
+  needsRetrace = true;
+}
 
 // Set true right after a fresh image load, consumed by the first B&W trace that follows it.
 // Scoped narrowly to that one trace so it never fights the user while they're deliberately
@@ -1833,8 +1880,21 @@ function classesToImageData(classes, pal, width, height){
 // fresh retrace and actually wait for it before exporting (see needsRetrace) — otherwise Download
 // would kick a trace off and immediately grab the still-stale lastSvgString written by the
 // PREVIOUS trace, exporting exactly the same stale-SVG bug this was meant to fix.
+//
+// Genuine intermittent bug, confirmed on a real export: runTrace's Color/Greyscale branch yields
+// mid-trace on purpose (per despeckle radius, per color group) to keep the tab responsive, so a
+// trace can legitimately take a real moment. If a SECOND call starts before the first finishes
+// (e.g. Color mode's own initial trace, or its auto-color-count correction retrace, still in
+// flight when a delete's Download-triggered retrace starts), both eventually write to the same
+// lastSvgString/svgHolder when they finish. Whichever finishes LAST wins — and the OLDER, stale
+// trace can easily finish last, since it may still have the just-deleted shape's own color group
+// left to process. That silently overwrote a correct, up-to-date export with a stale pre-edit one,
+// entirely dependent on timing — exactly the "intermittent" symptom reported. traceGeneration
+// tags every call; only the most-recently-STARTED call is allowed to actually commit its result.
+let traceGeneration = 0;
 function runTrace(){
   if (!originalImageData || typeof ImageTracer === 'undefined') return Promise.resolve();
+  const myGeneration = ++traceGeneration;
   traceStatus.textContent = 'Tracing…';
   processingOverlay.classList.add('show');
 
@@ -1898,9 +1958,22 @@ function runTrace(){
         // specific mode (Color and Greyscale each get their own flag — see
         // colorCountAutoPendingByMode's declaration for why: they're different color spaces with
         // different natural counts, and sharing one flag meant switching Greyscale -> Color found
-        // it already spent). Bails out before doing any of the actual (expensive) palette/trace
-        // work below, since dispatching 'input' on colorCount already schedules a fresh retrace
-        // with the corrected value moments later.
+        // it already spent).
+        //
+        // REAL BUG, found and fixed here (confirmed by directly scripting a repro — not guessed):
+        // this used to set colorCount.value, dispatch 'input' on it (which schedules a SEPARATE,
+        // debounced follow-up trace via scheduleTrace), and `return` immediately — leaving THIS
+        // trace's own lastSvgString/DOM commit undone, relying entirely on that second, later,
+        // uncoordinated trace to actually produce the real result. ensureFreshTrace's `await
+        // runTrace()` only awaits THIS call, not the separate debounced one — so it would resolve,
+        // its finally block would clear needsRetrace (having completed "successfully" as far as it
+        // knew), and Download would immediately export whatever lastSvgString still held from
+        // BEFORE this correction — the deleted shape's color, with the OLD colorCount. Confirmed
+        // directly: after a delete that changed colorCount 8 -> 7, lastSvgString still had the
+        // deleted color in it and needsRetrace was already false, despite a real corrected trace
+        // being clearly necessary. Fix: apply the corrected count and keep going in THIS SAME
+        // call instead of bailing out and hoping a second async trace catches up later — no
+        // separate debounced retrace needed at all.
         const autoPendingKey = isGreyscale ? 'greyscale' : 'color';
         if (colorCountAutoPendingByMode[autoPendingKey]) {
           colorCountAutoPendingByMode[autoPendingKey] = false;
@@ -1908,10 +1981,9 @@ function runTrace(){
           const suggestedColorCount = Math.max(2, Math.min(32, estimateTrueColorCount(colorSource, 24)));
           if (suggestedColorCount !== priorColorCount) {
             colorCount.value = suggestedColorCount;
-            colorCount.dispatchEvent(new Event('input'));
+            colorCountNum.value = suggestedColorCount;
             const noun = isGreyscale ? 'shade' : 'color';
             autoFixMessage = `Detected ${suggestedColorCount} distinct ${noun}${suggestedColorCount === 1 ? '' : 's'} in this image — ${isGreyscale ? 'Grey levels' : 'Color count'} auto-set to ${suggestedColorCount}. Click "Reset Color Count to Default" to undo.`;
-            return;
           }
         }
         const workingData = upsampleImageData(colorSource, superScale);
@@ -2033,6 +2105,13 @@ function runTrace(){
         renderPalette(palette);
       }
 
+      // A newer trace was started while this one was still running (see traceGeneration's
+      // declaration above for the full story) — bail out without committing anything. The newer
+      // call owns the right to write lastSvgString/svgHolder/pathCount now; if THIS stale call
+      // wrote over it after finishing later, that's the exact bug that let a pre-edit trace
+      // silently overwrite a correct post-edit export.
+      if (myGeneration !== traceGeneration) return;
+
       lastSvgString = svgString;
       svgHolder.innerHTML = svgString;
       const svgEl = svgHolder.querySelector('svg');
@@ -2088,8 +2167,13 @@ function runTrace(){
       console.error(e);
       traceStatus.textContent = 'Trace failed — try a smaller image or different settings.';
     } finally {
-      processingOverlay.classList.remove('show');
-      needsRetrace = false;
+      // Only the latest generation gets to declare the trace "done" — a stale call finishing late
+      // must not hide the spinner or clear needsRetrace out from under a newer trace that's still
+      // genuinely in flight (which would make things look finished when they aren't yet).
+      if (myGeneration === traceGeneration) {
+        processingOverlay.classList.remove('show');
+        needsRetrace = false;
+      }
       resolve();
     }
   }); });
@@ -2279,7 +2363,7 @@ function endBrushStroke(){
   // removed because it made the Vector preview AND the exported SVG silently stale relative to the
   // real source pixels whenever it was off, which is exactly what caused a deleted shape to still
   // be present in a downloaded SVG (see needsRetrace / the download handlers below).
-  needsRetrace = true;
+  invalidateInFlightTrace();
 }
 canvas.addEventListener('mouseup', endBrushStroke);
 canvas.addEventListener('mouseleave', endBrushStroke);
@@ -2484,79 +2568,16 @@ function commitDeleteSelection(){
   if (brushUndoStack.length > 20) brushUndoStack.shift();
 
   const d = originalImageData.data;
-  // TRIED then REVERTED (again — see the first REVERTED note above for the original round of
-  // this): fading the fringe toward neighboring pixels' colors, one ring at a time. Confirmed
-  // broken on a real detailed file: classifyToPalette/classesToImageData ignore partial alpha
-  // entirely (any pixel above the alpha<10 skip threshold renders fully OPAQUE in the final
-  // trace — see classesToImageData's flat `d[o+3]=255`), so the "fade" never actually renders
-  // soft at all, it just bakes in a solid, fully-opaque blotch of whatever the ring math computed.
-  // Worse, averaging multiple neighbors together at a fringe pixel that borders more than one real
-  // color (e.g. a hole edge touching both a jacket color and the black outline at once) fabricates
-  // a brand-new blended color that doesn't match any real palette entry — and once enough of those
-  // cluster along a long/complex deletion boundary, kMeansPalette's flat-pixel sampling picks them
-  // up as a legitimate extra color and broadcasts it to whichever UNRELATED pixels elsewhere in the
-  // whole image happen to be nearest to that fabricated shade. Confirmed directly: deleting one
-  // color region on a real detailed logo produced stray beige/grey/green speckle clusters inside
-  // completely unrelated black letterforms and snake-scale detail, nowhere near the actual
-  // deletion. Back to the plain hard erase — already proven clean on real files (see the first
-  // REVERTED note above) — until a genuine edge-smoothing approach is found that doesn't feed
-  // fabricated colors back into the palette.
-  const maskW = originalImageData.width, maskH = originalImageData.height;
-  // `touched` marks every pixel the mask has ANY coverage on — including partial-coverage fringe
-  // pixels, not just fully-covered ones — since those still need their stale RGB fixed below.
-  const touched = new Uint8Array(maskW * maskH);
-  for (let i = 3, p = 0; i < mask.length; i += 4, p++) {
-    if (mask[i] > 0) {
-      touched[p] = 1;
-      // SECOND bug found here, on top of the RGB one below: mctx.fill() already anti-aliases the
-      // deleted shape's smooth vector curve into the mask — real partial-coverage values (1-254),
-      // not a hard binary edge. The old code threw that away with `if (mask[i] > 0) d[i] = 0`,
-      // treating ANY nonzero coverage as "fully erase," which re-quantized the boundary into a
-      // coarse staircase before the trace pipeline ever got a chance to smooth it. Reducing alpha
-      // PROPORTIONALLY to the mask's real coverage instead preserves that sub-pixel curve shape,
-      // so the boundary that reaches upsampleImageData on the next trace is an accurate
-      // antialiased edge — matching how every other genuine edge in the source art already
-      // becomes a smooth curve — instead of a blocky approximation of one.
-      d[i] = Math.round(d[i] * (255 - mask[i]) / 255);
-    }
-  }
-
-  // Root cause of the miscolored half of this (found by tracing the pipeline, not guessed): every
-  // trace already upsamples the source with real bilinear filtering BEFORE classifying pixels (see
-  // upsampleImageData in runTrace). The alpha reduction above leaves the DELETED shape's own RGB
-  // sitting underneath every touched pixel, so that upsample step would blend the stale deleted
-  // color against the real neighboring RGB at the boundary, and classifyToPalette nearest-matches
-  // that blend to whichever palette entry happens to be closest — often the wrong one. Fix:
-  // recolor every touched pixel to its ONE nearest real (untouched) neighbor's exact RGB — never
-  // averaged across multiple differing neighbors, which is what an earlier reverted attempt above
-  // got wrong (blending fabricated a brand-new color that isn't in the real palette). Combined with
-  // the proportional alpha above, this gives the upsample step "real color, partial/zero alpha"
-  // blending against "real color, full alpha" at the boundary: a normal, correctly-colored,
-  // correctly-shaped antialiased edge, the same mechanism every other boundary in the image
-  // already relies on. Only pixels near the boundary matter (that's all the upsample's filter
-  // kernel reaches); pixels deep inside a large deletion stay fully transparent and untouched.
-  const RECOLOR_RING_PX = 2;
-  for (let ring = 0; ring < RECOLOR_RING_PX; ring++) {
-    const painted = [];
-    for (let y = 0; y < maskH; y++) {
-      for (let x = 0; x < maskW; x++) {
-        const p = y * maskW + x;
-        if (!touched[p]) continue;
-        let src = -1;
-        if (x > 0 && !touched[p - 1]) src = p - 1;
-        else if (x < maskW - 1 && !touched[p + 1]) src = p + 1;
-        else if (y > 0 && !touched[p - maskW]) src = p - maskW;
-        else if (y < maskH - 1 && !touched[p + maskW]) src = p + maskW;
-        if (src === -1) continue; // no real neighbor reachable yet — a later ring may still reach it
-        painted.push(p, src);
-      }
-    }
-    for (let i = 0; i < painted.length; i += 2) {
-      const p = painted[i], srcP = painted[i + 1];
-      const o = p * 4, so = srcP * 4;
-      d[o] = d[so]; d[o + 1] = d[so + 1]; d[o + 2] = d[so + 2]; // alpha untouched — keeps whatever the proportional step set
-      touched[p] = 0; // now carries a real color — lets the next ring reach one pixel further in
-    }
+  // THREE rounds of edge-smoothing attempts tried and reverted here (proportional alpha + single-
+  // neighbor recolor; recolor with a hard binary cut; fade-to-neighbor-average with varying alpha)
+  // — see git history on this file for the full detail of each. All either left the deleted
+  // shape's stale RGB to ghost back in, or fabricated new colors that contaminated kMeansPalette
+  // and broadcast speckle to unrelated parts of the image, confirmed on real detailed files every
+  // time. Settled back on the plain hard erase: it's the only version that's actually been clean
+  // on a real file across this whole project. Costs a hard pixel-edge on deletions instead of a
+  // smooth one — acceptable; a corrupted export is a worse problem than a jagged edge.
+  for (let i = 3; i < mask.length; i += 4) {
+    if (mask[i] > 0) d[i] = 0;
   }
   ctx.putImageData(originalImageData, 0, 0); // keep the raster canvas in sync with originalImageData, like the freehand brush does
 
@@ -2574,7 +2595,7 @@ function commitDeleteSelection(){
   colorCountAutoPendingByMode = { color: true, greyscale: true };
 
   cancelDeleteSelection();
-  needsRetrace = true;
+  invalidateInFlightTrace();
 }
 
 deleteScopeSelect.addEventListener('change', async () => {
