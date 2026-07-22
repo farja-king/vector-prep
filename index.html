@@ -540,6 +540,8 @@
             <option value="color">Color / Posterize</option>
           </select>
         </div>
+        <button class="action" id="vectorizeBtn" style="margin-bottom:12px;">Vectorize</button>
+        <p class="hint" style="margin:-6px 0 12px;">Load an image, pick a mode above, then Vectorize to run the first trace. After that, every slider/setting below still updates the preview live as you adjust it — Vectorize is only for that first pass (or to force a full retrace on demand).</p>
         <button class="action ghost" id="refreshTrace" style="margin-bottom:12px;">↻ Refresh (Redo From Scratch)</button>
         <p class="hint" style="margin:-6px 0 12px;">If a color/shade count looks off (e.g. after switching modes), Refresh re-runs this mode's first-look detection fresh, exactly as if the image had just been loaded — no need to reload the file.</p>
 
@@ -846,10 +848,10 @@ function setView(showVector){
   viewVectorBtn.classList.toggle('active', showVector);
 }
 viewSourceBtn.addEventListener('click', () => { setView(false); renderZoomSize(); });
-// Forces a fresh retrace first if pixels have changed since the last one (see needsRetrace /
-// ensureFreshTrace below) — switching to Vector view is exactly the moment a stale preview would
-// otherwise be visible, so this is what replaced the old manual "Re-vectorize Now" button.
-viewVectorBtn.addEventListener('click', async () => { await ensureFreshTrace(); setView(true); renderZoomSize(); });
+// Pure view switch, no side effects — the Vectorize button (Trace mode box) is now the one place
+// that explicitly triggers a trace. Download and entering Delete-shapes mode still force a fresh
+// retrace themselves first (see ensureFreshTrace below) since correctness there isn't optional.
+viewVectorBtn.addEventListener('click', () => { setView(true); renderZoomSize(); });
 
 const canvasPanel = document.querySelector('.canvas-panel');
 const zoomLevelInput = document.getElementById('zoomLevel');
@@ -949,7 +951,9 @@ function loadImageFile(file){
       autoFixPending = true;
       autoFixMessage = '';
       colorCountAutoPendingByMode = { color: true, greyscale: true };
-      scheduleTrace(0);
+      // No auto-trace on load anymore — pick a mode, then click Vectorize. These one-shot flags
+      // stay armed regardless, so whichever mode is active when Vectorize is finally clicked still
+      // gets its correct first-look auto-detect.
     };
     img.src = e.target.result;
   };
@@ -998,7 +1002,7 @@ modeSelect.addEventListener('change', () => {
   // instead of implying hues that were never in the output.
   colorCountLabel.textContent = isGreyscale ? 'Grey levels' : 'Color count';
   paletteBlockTitle.textContent = isGreyscale ? 'Detected shades' : 'Detected palette';
-  scheduleTrace();
+  // No auto-trace on mode switch — pick a mode, then click Vectorize.
 });
 
 // Curve smoothing / Speckle removal / Edge smoothing / Right-angle enhance are ONE shared Detail
@@ -1034,16 +1038,20 @@ function saveDetailState(modeKey){
     rightAngle: rightAngle.checked
   };
 }
+// Restores the slider VALUES (and their paired number-box displays) directly rather than via
+// .dispatchEvent — dispatching 'input'/'change' would also fire each control's own scheduleTrace()
+// call, auto-retracing on every mode switch. Mode switching itself should never auto-trace (pick a
+// mode, then click Vectorize); this keeps that true even though restoring per-mode Detail settings
+// touches the same sliders a manual adjustment would.
 function loadDetailState(modeKey){
   const s = modeDetailState[modeKey];
   simplify.value = s.simplify;
-  simplify.dispatchEvent(new Event('input'));
+  simplifyNum.value = simplifyToTres(s.simplify).toFixed(2);
   speckle.value = s.speckle;
-  speckle.dispatchEvent(new Event('input'));
+  speckleNum.value = s.speckle;
   smoothing.value = s.smoothing;
-  smoothing.dispatchEvent(new Event('input'));
+  smoothingNum.value = s.smoothing.toFixed(1);
   rightAngle.checked = s.rightAngle;
-  rightAngle.dispatchEvent(new Event('change'));
 }
 modeSelect.addEventListener('change', () => {
   saveDetailState(currentDetailMode);
@@ -1420,6 +1428,11 @@ document.getElementById('suggestSettings').addEventListener('click', () => {
   // whatever Detail values existed before this suggestion, discarding it.
   saveDetailState(currentDetailMode);
 });
+
+// The explicit, one-click "run the first trace" step — loading an image or switching modes no
+// longer auto-traces (see loadImageFile / modeSelect's handlers), so this is what actually kicks
+// it off. Everything after that (sliders, Delete-shapes, Download) works exactly as it already did.
+document.getElementById('vectorizeBtn').addEventListener('click', () => scheduleTrace(0));
 
 // Re-arms whichever one-shot "first look at this image" auto-detect belongs to the CURRENT mode
 // (Threshold/Invert for B&W, Color/Grey-level count for Color/Greyscale — see autoFixPending /
