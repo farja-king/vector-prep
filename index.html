@@ -48,6 +48,42 @@
      baseline around. Labels swap contextually ("Grey levels"/"Detected shades" vs "Color
      count"/"Detected palette"). originalImageData itself is never touched by the conversion, so
      switching back to Color or B&W still traces the real colors.
+  8. Fixed kMeansPalette's flat-pixel filter using the sampling STRIDE (`step`, which grows with
+     image size) as its neighbor-check distance instead of a small fixed one — on a large/detailed
+     image this meant checking "flatness" against a neighbor 15-20px away, almost always crossing
+     real detail, starving the filter and silently falling back to unfiltered (anti-aliasing-noise-
+     contaminated) sampling on exactly the images that most needed the filter. Now uses a fixed 2px
+     check, matching estimateTrueColorCount's own (already-correct) call.
+  9. Delete-shapes edge quality, three rounds on the same spot — TRIED and REVERTED twice before
+     landing on what's actually in the code now:
+     - Round 1 (blend+fade fringe RGB, varying alpha): broken — classifyToPalette/classesToImageData
+       ignore partial alpha entirely (anything above alpha 10 renders fully OPAQUE), so the "fade"
+       never rendered soft, it just baked in solid blotches of whatever the ring math computed.
+       Averaging multiple differently-colored neighbors together also fabricated brand-new colors
+       that don't exist in the real palette, and once enough clustered along a deletion boundary,
+       kMeansPalette picked them up as a real color and broadcast them to unrelated pixels elsewhere
+       in the image (confirmed: stray beige/grey/green speckle inside unrelated black letterforms).
+     - Round 2 (recolor to ONE real neighbor's RGB, but keep the OLD binary alpha cut): still jagged.
+       Root cause: the erase mask IS naturally anti-aliased by the canvas fill (real partial-coverage
+       values), but `if (mask[i] > 0) d[i] = 0` collapsed any nonzero coverage into a full erase,
+       throwing that sub-pixel curve shape away and re-quantizing the boundary into a staircase.
+     - Round 3 (current): reduce alpha PROPORTIONALLY to the mask's real coverage (preserves the
+       curve's sub-pixel shape) AND recolor every touched pixel to its one nearest real neighbor's
+       exact RGB (never blended). Confirmed a major improvement on the real Cobra reference file
+       (see below) but a small remaining rough patch was seen at one junction where the hole
+       touched more than one real color at once — not fully re-verified after the auto-revectorize
+       fix below (that fix was what turned out to be showing STALE pre-edit traces half the time,
+       so some earlier "still jagged" observations in this round may have been that, not this).
+       Needs a clean re-test.
+  10. Removed the "Auto re-vectorize after each stroke" checkbox entirely (Touch-up brush + Delete
+      shapes both used it). It defaulted ON, but whenever a session had it off, edits (brush strokes,
+      deletes) updated originalImageData immediately while the Vector preview AND lastSvgString (what
+      Download SVG/PNG actually export) silently kept showing the PREVIOUS trace until a manual
+      re-vectorize — which is exactly how a deleted shape reappeared in a downloaded SVG: the
+      download just read stale lastSvgString. Now retracing is always manual (Re-vectorize Now), and
+      a new `needsRetrace` flag (set on every edit, cleared when a trace completes) makes the
+      Download SVG/PNG handlers force-and-await a fresh trace first if pixels have changed since the
+      last one — so an export can no longer go stale regardless of what the user clicked.
 
   INTENTIONAL BEHAVIOR, NOT BUGS:
   - Deleting a shape leaves a TRANSPARENT hole, not a fill of the surrounding color. Explicitly
@@ -63,10 +99,13 @@
   WORKING AGREEMENT: propose a fix and wait for explicit go-ahead before writing code, even when a
   bug seems obvious and well-diagnosed — what looks like a defect can be intentional depending on
   the use case (see the transparent-hole point above, which is exactly that situation). Once agreed,
-  verify against the REAL files in Downloads (IMG_2685.PNG / "wolf export.svg" are the known
-  reference test case for the Delete-shapes + Color-mode pipeline) before pushing, not just
-  synthetic test images — synthetic tests already missed real bugs twice in this project (the
-  ghost-fringe defect above, and the original 271-path mess, both only reproduced on the real file).
+  verify against a REAL reference file before pushing, not just synthetic test images — synthetic
+  tests already missed real bugs multiple times in this project (the ghost-fringe defect above, the
+  original 271-path mess, and the auto-revectorize-hides-stale-state issue in point 10 above, all
+  only ever reproduced on a real file). Known reference files: IMG_2685.PNG / "wolf export.svg" in
+  Downloads on the Works PC (Delete-shapes + Color-mode, original reference); Downloads/
+  CobraLogo-highreso-trans.png on the Home PC (used for point 8/9/10's testing — a good stand-in
+  when the wolf file isn't on the machine you're working from).
 -->
 <!DOCTYPE html>
 <html lang="en">
@@ -467,10 +506,12 @@
         <div class="row" style="margin-bottom:12px;">
           <select id="mode">
             <option value="bw">Line Art (Black &amp; White)</option>
-            <option value="color">Color / Posterize</option>
             <option value="greyscale">Greyscale (Multi-tone)</option>
+            <option value="color">Color / Posterize</option>
           </select>
         </div>
+        <button class="action ghost" id="refreshTrace" style="margin-bottom:12px;">↻ Refresh (Redo From Scratch)</button>
+        <p class="hint" style="margin:-6px 0 12px;">If a color/shade count looks off (e.g. after switching modes), Refresh re-runs this mode's first-look detection fresh, exactly as if the image had just been loaded — no need to reload the file.</p>
 
         <div id="bwControls">
           <div class="slider-row">
@@ -495,6 +536,73 @@
             <input type="number" class="num-input" id="colorCountNum" min="2" max="32" step="1" value="8">
           </div>
           <button class="action ghost" id="resetColorCount" style="margin-top:10px;">Reset Color Count to Default</button>
+
+          <div id="paletteBlock" style="display:none; margin-top:14px; padding-top:14px; border-top:1px solid var(--paper-line);">
+            <div style="font-family:'Oswald',sans-serif;font-weight:700;font-size:13px;text-transform:uppercase;letter-spacing:.04em;margin-bottom:8px;" id="paletteBlockTitle">Detected palette</div>
+            <p class="hint">Click a color to give it its own curve fit / edge smoothing, overriding the shared Detail settings just for that color.</p>
+            <div class="swatch-list" id="swatchList"><span class="swatch-empty">Trace an image to see colors</span></div>
+            <div id="colorOverridePanel" style="display:none; margin-top:12px; padding-top:12px; border-top:1px solid var(--paper-line);">
+              <div style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:#8a8578;margin-bottom:8px;display:flex;align-items:center;gap:8px;justify-content:space-between;">
+                <div style="display:flex;align-items:center;gap:8px;">
+                  <span id="overrideColorSwatch" style="width:16px;height:16px;border-radius:50%;border:2px solid var(--ink);display:inline-block;"></span>
+                  <span>Editing this color only</span>
+                </div>
+                <button type="button" id="overrideCollapse" title="Close (your changes stay applied — click a swatch to reopen)" style="border:1px solid #c9c2b2;background:#fff;color:var(--ink);cursor:pointer;font-family:'IBM Plex Mono',monospace;font-size:11px;line-height:1;width:20px;height:20px;padding:0;">✕</button>
+              </div>
+              <div class="slider-row">
+                <div class="slider-col">
+                  <label>Curve fit</label>
+                  <input type="range" id="overrideCurveFit" min="0.02" max="40" step="0.01" value="2.21">
+                </div>
+                <input type="number" class="num-input" id="overrideCurveFitNum" min="0.02" max="40" step="0.01" value="2.21">
+              </div>
+              <div class="slider-row">
+                <div class="slider-col">
+                  <label>Edge smoothing</label>
+                  <input type="range" id="overrideEdgeSmoothing" min="0" max="40" step="0.1" value="5">
+                </div>
+                <input type="number" class="num-input" id="overrideEdgeSmoothingNum" min="0" max="40" step="0.1" value="5">
+              </div>
+              <div class="slider-row">
+                <div class="slider-col">
+                  <label>Speckle removal</label>
+                  <input type="range" id="overrideSpeckle" min="0" max="200" step="1" value="3">
+                </div>
+                <input type="number" class="num-input" id="overrideSpeckleNum" min="0" max="200" step="1" value="3">
+              </div>
+              <div style="margin-top:8px; padding-top:8px; border-top:1px solid var(--paper-line);">
+                <div class="slider-row">
+                  <div class="slider-col">
+                    <label>Brightness</label>
+                    <input type="range" id="overrideBrightness" min="-100" max="100" step="1" value="0">
+                  </div>
+                  <input type="number" class="num-input" id="overrideBrightnessNum" min="-100" max="100" step="1" value="0">
+                </div>
+                <div class="slider-row">
+                  <div class="slider-col">
+                    <label>Contrast</label>
+                    <input type="range" id="overrideContrast" min="-100" max="100" step="1" value="0">
+                  </div>
+                  <input type="number" class="num-input" id="overrideContrastNum" min="-100" max="100" step="1" value="0">
+                </div>
+                <div class="slider-row">
+                  <div class="slider-col">
+                    <label>Saturation</label>
+                    <input type="range" id="overrideSaturation" min="-100" max="100" step="1" value="0">
+                  </div>
+                  <input type="number" class="num-input" id="overrideSaturationNum" min="-100" max="100" step="1" value="0">
+                </div>
+                <div class="slider-row">
+                  <div class="slider-col">
+                    <label>Vibrancy</label>
+                    <input type="range" id="overrideVibrancy" min="0" max="100" step="1" value="0">
+                  </div>
+                  <input type="number" class="num-input" id="overrideVibrancyNum" min="0" max="100" step="1" value="0">
+                </div>
+              </div>
+              <button class="action ghost" id="overrideUseGlobal">Use Global Settings for This Color</button>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -532,101 +640,8 @@
         <button class="action ghost" id="resetDetail" style="margin-top:10px;">Reset Detail to Defaults</button>
       </div>
 
-      <div class="tool-block" id="paletteBlock" style="display:none;">
-        <h3><span class="n">02</span> <span id="paletteBlockTitle">Detected palette</span></h3>
-        <p class="hint">Click a color to give it its own curve fit / edge smoothing, overriding the shared Detail settings just for that color.</p>
-        <div class="swatch-list" id="swatchList"><span class="swatch-empty">Trace an image to see colors</span></div>
-        <div id="colorOverridePanel" style="display:none; margin-top:12px; padding-top:12px; border-top:1px solid var(--paper-line);">
-          <div style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:#8a8578;margin-bottom:8px;display:flex;align-items:center;gap:8px;">
-            <span id="overrideColorSwatch" style="width:16px;height:16px;border-radius:50%;border:2px solid var(--ink);display:inline-block;"></span>
-            <span>Editing this color only</span>
-          </div>
-          <div class="slider-row">
-            <div class="slider-col">
-              <label>Curve fit</label>
-              <input type="range" id="overrideCurveFit" min="0.02" max="40" step="0.01" value="2.21">
-            </div>
-            <input type="number" class="num-input" id="overrideCurveFitNum" min="0.02" max="40" step="0.01" value="2.21">
-          </div>
-          <div class="slider-row">
-            <div class="slider-col">
-              <label>Edge smoothing</label>
-              <input type="range" id="overrideEdgeSmoothing" min="0" max="40" step="0.1" value="5">
-            </div>
-            <input type="number" class="num-input" id="overrideEdgeSmoothingNum" min="0" max="40" step="0.1" value="5">
-          </div>
-          <div class="slider-row">
-            <div class="slider-col">
-              <label>Speckle removal</label>
-              <input type="range" id="overrideSpeckle" min="0" max="200" step="1" value="3">
-            </div>
-            <input type="number" class="num-input" id="overrideSpeckleNum" min="0" max="200" step="1" value="3">
-          </div>
-          <div style="margin-top:8px; padding-top:8px; border-top:1px solid var(--paper-line);">
-            <div class="slider-row">
-              <div class="slider-col">
-                <label>Brightness</label>
-                <input type="range" id="overrideBrightness" min="-100" max="100" step="1" value="0">
-              </div>
-              <input type="number" class="num-input" id="overrideBrightnessNum" min="-100" max="100" step="1" value="0">
-            </div>
-            <div class="slider-row">
-              <div class="slider-col">
-                <label>Contrast</label>
-                <input type="range" id="overrideContrast" min="-100" max="100" step="1" value="0">
-              </div>
-              <input type="number" class="num-input" id="overrideContrastNum" min="-100" max="100" step="1" value="0">
-            </div>
-            <div class="slider-row">
-              <div class="slider-col">
-                <label>Saturation</label>
-                <input type="range" id="overrideSaturation" min="-100" max="100" step="1" value="0">
-              </div>
-              <input type="number" class="num-input" id="overrideSaturationNum" min="-100" max="100" step="1" value="0">
-            </div>
-            <div class="slider-row">
-              <div class="slider-col">
-                <label>Vibrancy</label>
-                <input type="range" id="overrideVibrancy" min="0" max="100" step="1" value="0">
-              </div>
-              <input type="number" class="num-input" id="overrideVibrancyNum" min="0" max="100" step="1" value="0">
-            </div>
-          </div>
-          <button class="action ghost" id="overrideUseGlobal">Use Global Settings for This Color</button>
-        </div>
-      </div>
-
       <div class="tool-block">
-        <h3><span class="n">03</span> Touch-up brush</h3>
-        <p class="hint">Paints directly onto the source pixels (Source view), so edits get traced properly instead of sitting on top as a raster patch. Switches to Source view automatically.</p>
-        <div class="row" style="margin-bottom:12px;">
-          <select id="brushMode">
-            <option value="off">Off</option>
-            <option value="erase">Erase (remove)</option>
-            <option value="restore">Restore (undo to original)</option>
-            <option value="paint">Paint (custom color)</option>
-          </select>
-        </div>
-        <div id="brushPaintControls" style="display:none;">
-          <div class="row" style="align-items:center; margin-bottom:8px;">
-            <label style="flex:1;">Paint color</label>
-            <input type="color" id="brushColor" value="#B23A26" style="width:44px; height:28px; padding:0; border:1px solid #c9c2b2; cursor:pointer;">
-          </div>
-          <button class="action ghost" id="eyedropperBtn" style="margin-bottom:12px;">🎨 Pick Color From Image</button>
-        </div>
-        <label style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:#8a8578;">Brush size — <span id="brushSizeVal">30</span>px</label>
-        <input type="range" id="brushSize" min="4" max="150" value="30">
-        <div style="height:8px"></div>
-        <button class="action ghost" id="brushUndo" style="margin-bottom:6px;">Undo Last Stroke</button>
-        <button class="action ghost" id="brushResetAll" style="margin-bottom:12px;">Reset All Touch-ups</button>
-        <label style="font-size:11px; color:#8a8578; display:block; margin-bottom:8px;">
-          <input type="checkbox" id="autoRevectorize" checked> Auto re-vectorize after each stroke
-        </label>
-        <button class="action" id="revectorizeNow">Re-vectorize Now</button>
-      </div>
-
-      <div class="tool-block">
-        <h3><span class="n">04</span> Delete shapes</h3>
+        <h3><span class="n">02</span> Delete shapes</h3>
         <p class="hint">Click a shape in the Vector preview to select it (and, at Tolerance scope, every similarly-colored shape near it), then click it again — or press Delete Selected — to remove it. Erases the underlying source pixels, so deletions survive re-tracing. Switches to Vector view automatically.</p>
         <div class="row" style="margin-bottom:12px;">
           <select id="deleteScope">
@@ -655,7 +670,33 @@
       </div>
 
       <div class="tool-block">
-        <h3><span class="n">05</span> Export</h3>
+        <h3><span class="n">03</span> Touch-up brush</h3>
+        <p class="hint">Paints directly onto the source pixels (Source view), so edits get traced properly instead of sitting on top as a raster patch. Switches to Source view automatically.</p>
+        <div class="row" style="margin-bottom:12px;">
+          <select id="brushMode">
+            <option value="off">Off</option>
+            <option value="erase">Erase (remove)</option>
+            <option value="restore">Restore (undo to original)</option>
+            <option value="paint">Paint (custom color)</option>
+          </select>
+        </div>
+        <div id="brushPaintControls" style="display:none;">
+          <div class="row" style="align-items:center; margin-bottom:8px;">
+            <label style="flex:1;">Paint color</label>
+            <input type="color" id="brushColor" value="#B23A26" style="width:44px; height:28px; padding:0; border:1px solid #c9c2b2; cursor:pointer;">
+          </div>
+          <button class="action ghost" id="eyedropperBtn" style="margin-bottom:12px;">🎨 Pick Color From Image</button>
+        </div>
+        <label style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:#8a8578;">Brush size — <span id="brushSizeVal">30</span>px</label>
+        <input type="range" id="brushSize" min="4" max="150" value="30">
+        <div style="height:8px"></div>
+        <p class="hint" style="margin-top:0;">Edits (brush strokes, deletes) are staged on the source pixels immediately — switching to VECTOR view or downloading automatically re-traces first if anything's changed, so there's never a separate step needed.</p>
+        <button class="action ghost" id="brushUndo" style="margin-bottom:6px;">Undo Last Stroke</button>
+        <button class="action ghost" id="brushResetAll" style="margin-bottom:12px;">Reset All Touch-ups</button>
+      </div>
+
+      <div class="tool-block">
+        <h3><span class="n">04</span> Export</h3>
         <button class="action" id="downloadSvg" style="margin-bottom:8px;">Download SVG</button>
         <button class="action ghost" id="downloadPng">Download PNG Preview</button>
         <div id="traceStatus" style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:#8a8578;margin-top:8px;min-height:14px;"></div>
@@ -712,6 +753,14 @@ let pristineImageData = null; // untouched backup for the Restore brush and Rese
 let brushUndoStack = []; // snapshots of originalImageData.data taken before each stroke
 let traceTimeout = null;
 
+// True whenever originalImageData has changed (a brush stroke, a delete commit) since the last
+// completed trace — i.e. the Vector preview AND lastSvgString (what Download SVG/PNG actually
+// export) are stale relative to the real source pixels. Set on every edit, cleared once runTrace
+// finishes. The download handlers check this and force a synchronous retrace first so an export
+// can never silently omit an edit that just hadn't been manually re-vectorized yet — which is
+// exactly how a deleted shape previously reappeared in a downloaded SVG.
+let needsRetrace = false;
+
 // Set true right after a fresh image load, consumed by the first B&W trace that follows it.
 // Scoped narrowly to that one trace so it never fights the user while they're deliberately
 // tuning sliders afterward, and never touches Detail settings (simplify/speckle/smoothing) —
@@ -720,12 +769,17 @@ let traceTimeout = null;
 let autoFixPending = false;
 let autoFixMessage = '';
 
-// Same one-shot-per-image pattern as autoFixPending above, but for Color mode: consumed by the
-// first Color-mode trace after a fresh image load (which may not be the very first trace overall,
-// since B&W is the default mode — this stays pending until the user actually switches to Color).
-// The hardcoded Color count default (8) was never actually checked against the image, so a true
-// 2-color logo traced with 8 color slots requested regardless.
-let colorCountAutoPending = false;
+// Same one-shot-per-image pattern as autoFixPending above, but for Color/Greyscale: consumed by
+// the first trace in EACH of those two modes after a fresh image load (may not be the very first
+// trace overall, since B&W is the default — stays pending until the user actually switches into
+// that mode). The hardcoded Color count default (8) was never actually checked against the image,
+// so a true 2-color logo traced with 8 color slots requested regardless.
+// Kept as a PER-MODE object, not one shared flag — confirmed as a real bug on a real file: loading
+// B&W -> switching to Greyscale (consumes the flag, auto-detects grey-level count against the
+// desaturated image) -> switching to Color used to find the flag already spent, so Color mode
+// silently kept whatever count Greyscale had computed for a totally different color space, instead
+// of getting its own auto-detect — the reported "missing colors until I re-vectorize" symptom.
+let colorCountAutoPendingByMode = { color: true, greyscale: true };
 
 // Maps the 0-8000 slider to an ltres/qtres error threshold of 0.02-40 — widened again from
 // 0.02-20 for a busier real-world graphic that needed more headroom on all the Detail controls.
@@ -745,7 +799,10 @@ function setView(showVector){
   viewVectorBtn.classList.toggle('active', showVector);
 }
 viewSourceBtn.addEventListener('click', () => { setView(false); renderZoomSize(); });
-viewVectorBtn.addEventListener('click', () => { setView(true); renderZoomSize(); });
+// Forces a fresh retrace first if pixels have changed since the last one (see needsRetrace /
+// ensureFreshTrace below) — switching to Vector view is exactly the moment a stale preview would
+// otherwise be visible, so this is what replaced the old manual "Re-vectorize Now" button.
+viewVectorBtn.addEventListener('click', async () => { await ensureFreshTrace(); setView(true); renderZoomSize(); });
 
 const canvasPanel = document.querySelector('.canvas-panel');
 const zoomLevelInput = document.getElementById('zoomLevel');
@@ -844,7 +901,7 @@ function loadImageFile(file){
       fitZoomToContainer();
       autoFixPending = true;
       autoFixMessage = '';
-      colorCountAutoPending = true;
+      colorCountAutoPendingByMode = { color: true, greyscale: true };
       scheduleTrace(0);
     };
     img.src = e.target.result;
@@ -869,7 +926,7 @@ document.getElementById('reset').addEventListener('click', () => {
   lastPalette = [];
   autoFixPending = false;
   autoFixMessage = '';
-  colorCountAutoPending = false;
+  colorCountAutoPendingByMode = { color: false, greyscale: false };
   colorOverrides = {};
   selectedColorIndex = null;
   colorOverridePanel.style.display = 'none';
@@ -1058,6 +1115,14 @@ document.getElementById('overrideUseGlobal').addEventListener('click', () => {
   colorOverridePanel.style.display = 'none';
   selectedColorIndex = null;
   scheduleTrace();
+});
+
+// Just hides the panel to save space — unlike "Use Global Settings" above, this does NOT discard
+// selectedColorIndex or colorOverrides, so whatever was tuned stays applied. Clicking a swatch
+// (any swatch, including the one just closed) reopens it via selectColorForOverride, which always
+// sets display back to 'block'.
+document.getElementById('overrideCollapse').addEventListener('click', () => {
+  colorOverridePanel.style.display = 'none';
 });
 
 invert.addEventListener('change', () => scheduleTrace());
@@ -1309,6 +1374,23 @@ document.getElementById('suggestSettings').addEventListener('click', () => {
   saveDetailState(currentDetailMode);
 });
 
+// Re-arms whichever one-shot "first look at this image" auto-detect belongs to the CURRENT mode
+// (Threshold/Invert for B&W, Color/Grey-level count for Color/Greyscale — see autoFixPending /
+// colorCountAutoPendingByMode) and retraces, exactly reproducing what happens on a genuinely fresh
+// image load for that mode. Added because switching modes before a mode's own auto-detect had run
+// against it (e.g. B&W -> Greyscale -> Color) could leave a mode's auto-detect never actually
+// triggered — this gives a manual way to force it without reloading the file from disk.
+document.getElementById('refreshTrace').addEventListener('click', () => {
+  if (!originalImageData) return;
+  if (modeSelect.value === 'bw') {
+    autoFixPending = true;
+    autoFixMessage = '';
+  } else {
+    colorCountAutoPendingByMode[modeSelect.value] = true;
+  }
+  scheduleTrace(0);
+});
+
 // Wraps every number input with custom up/down stepper buttons — moving the input into a new
 // wrapper preserves its existing listeners, so this can run after the binding above with no
 // extra wiring needed beyond the buttons themselves.
@@ -1500,7 +1582,15 @@ function sampleFlatPixels(imgData, step, checkDist, threshold){
 function kMeansPalette(imgData, k, iterations){
   const { width, height, data } = imgData;
   const step = Math.max(1, Math.round(Math.sqrt((width * height) / 40000)));
-  let samples = sampleFlatPixels(imgData, step, step, 12);
+  // checkDist must stay a small fixed distance (matching estimateTrueColorCount's own
+  // sampleFlatPixels call), NOT the sampling stride `step` — step grows with image size/detail
+  // (sqrt(area/40000)), so on a large detailed image it was checking neighbors 15-20px away to
+  // judge "flatness". That's nowhere near "adjacent pixel" and almost always crosses real detail,
+  // starving the flat-pixel filter down to too few samples and silently triggering the unfiltered
+  // fallback below on exactly the detailed images that need the flat filter most — reintroducing
+  // the anti-aliasing-noise-in-clustering problem (fragmented/speckled paths) the filter exists to
+  // prevent, confirmed as the "grey scaling bugs on detailed images" report.
+  let samples = sampleFlatPixels(imgData, step, 2, 12);
   // A busy/photographic image (lots of gradients, few truly flat regions) can starve the flat-
   // pixel filter down to almost nothing — fall back to unfiltered sampling rather than
   // clustering on a near-empty set in that case.
@@ -1739,8 +1829,12 @@ function classesToImageData(classes, pal, width, height){
   return out;
 }
 
+// Returns a Promise resolving once this trace completes, so the download handlers can force a
+// fresh retrace and actually wait for it before exporting (see needsRetrace) — otherwise Download
+// would kick a trace off and immediately grab the still-stale lastSvgString written by the
+// PREVIOUS trace, exporting exactly the same stale-SVG bug this was meant to fix.
 function runTrace(){
-  if (!originalImageData || typeof ImageTracer === 'undefined') return;
+  if (!originalImageData || typeof ImageTracer === 'undefined') return Promise.resolve();
   traceStatus.textContent = 'Tracing…';
   processingOverlay.classList.add('show');
 
@@ -1748,7 +1842,7 @@ function runTrace(){
   // which would leave a trace started right before a tab-switch stuck at "Tracing…" forever.
   // setTimeout still yields one tick (letting the status text paint before the heavy synchronous
   // work below blocks the thread) but keeps firing regardless of tab visibility.
-  setTimeout(async () => {
+  return new Promise(resolve => { setTimeout(async () => {
     try {
       const isBw = modeSelect.value === 'bw';
       const tres = simplifyToTres(parseFloat(simplify.value));
@@ -1800,13 +1894,16 @@ function runTrace(){
         const isGreyscale = modeSelect.value === 'greyscale';
         const colorSource = isGreyscale ? toGreyscaleImageData(originalImageData) : originalImageData;
 
-        // Consumed once per freshly-loaded image, the first time it actually gets traced in
-        // Color mode (which may not be the very first trace overall, since B&W is the default —
-        // this stays pending until the user switches). Bails out before doing any of the actual
-        // (expensive) palette/trace work below, since dispatching 'input' on colorCount already
-        // schedules a fresh retrace with the corrected value moments later.
-        if (colorCountAutoPending) {
-          colorCountAutoPending = false;
+        // Consumed once per freshly-loaded image, the first time it actually gets traced in THIS
+        // specific mode (Color and Greyscale each get their own flag — see
+        // colorCountAutoPendingByMode's declaration for why: they're different color spaces with
+        // different natural counts, and sharing one flag meant switching Greyscale -> Color found
+        // it already spent). Bails out before doing any of the actual (expensive) palette/trace
+        // work below, since dispatching 'input' on colorCount already schedules a fresh retrace
+        // with the corrected value moments later.
+        const autoPendingKey = isGreyscale ? 'greyscale' : 'color';
+        if (colorCountAutoPendingByMode[autoPendingKey]) {
+          colorCountAutoPendingByMode[autoPendingKey] = false;
           const priorColorCount = parseInt(colorCount.value);
           const suggestedColorCount = Math.max(2, Math.min(32, estimateTrueColorCount(colorSource, 24)));
           if (suggestedColorCount !== priorColorCount) {
@@ -1992,8 +2089,10 @@ function runTrace(){
       traceStatus.textContent = 'Trace failed — try a smaller image or different settings.';
     } finally {
       processingOverlay.classList.remove('show');
+      needsRetrace = false;
+      resolve();
     }
-  });
+  }); });
 }
 
 function renderPalette(palette){
@@ -2029,7 +2128,17 @@ function renderPalette(palette){
   }
 }
 
-document.getElementById('downloadSvg').addEventListener('click', () => {
+// Forces a fresh, awaited retrace first if the source pixels have changed since the last one
+// (a brush stroke or delete that was never manually re-vectorized) — otherwise the download would
+// export whatever lastSvgString happened to be left over from an earlier trace, silently omitting
+// edits that were staged but never shown. This is what a deleted shape reappearing in an exported
+// SVG actually was: not a bug in the delete itself, the export was just reading stale data.
+async function ensureFreshTrace(){
+  if (needsRetrace) { clearTimeout(traceTimeout); await runTrace(); }
+}
+
+document.getElementById('downloadSvg').addEventListener('click', async () => {
+  await ensureFreshTrace();
   if (!lastSvgString) return;
   const blob = new Blob([lastSvgString], { type: 'image/svg+xml' });
   const a = document.createElement('a');
@@ -2039,7 +2148,8 @@ document.getElementById('downloadSvg').addEventListener('click', () => {
   URL.revokeObjectURL(a.href);
 });
 
-document.getElementById('downloadPng').addEventListener('click', () => {
+document.getElementById('downloadPng').addEventListener('click', async () => {
+  await ensureFreshTrace();
   if (!lastSvgString) return;
   const svgBlob = new Blob([lastSvgString], { type: 'image/svg+xml' });
   const url = URL.createObjectURL(svgBlob);
@@ -2157,18 +2267,20 @@ canvas.addEventListener('mousemove', e => {
   const { x, y } = eventToImageCoords(e);
   paintStrokeAt(x, y);
 });
-const autoRevectorizeCheckbox = document.getElementById('autoRevectorize');
 function endBrushStroke(){
   if (!brushActive) return;
   brushActive = false;
   originalImageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-  // With auto re-vectorize off, strokes just accumulate on the raster canvas (still visible in
-  // Source view) without a full retrace after every single one — useful on a busy image where
-  // retracing after each stroke is slow enough to get in the way of painting several touch-ups
-  // in a row. "Re-vectorize Now" (or turning auto back on) catches it up whenever you're ready.
-  if (autoRevectorizeCheckbox.checked) scheduleTrace();
+  // Strokes accumulate on the raster canvas (still visible in Source view) without retracing
+  // after every single one — a full retrace can be slow enough on a busy image to get in the way
+  // of painting several touch-ups in a row. Explicit "Re-vectorize Now" (or Download, which forces
+  // one first — see needsRetrace) catches the preview/export up whenever you're ready. This used to
+  // be an "Auto re-vectorize" checkbox that defaulted to auto-retracing after every stroke/delete —
+  // removed because it made the Vector preview AND the exported SVG silently stale relative to the
+  // real source pixels whenever it was off, which is exactly what caused a deleted shape to still
+  // be present in a downloaded SVG (see needsRetrace / the download handlers below).
+  needsRetrace = true;
 }
-document.getElementById('revectorizeNow').addEventListener('click', () => scheduleTrace(0));
 canvas.addEventListener('mouseup', endBrushStroke);
 canvas.addEventListener('mouseleave', endBrushStroke);
 
@@ -2372,8 +2484,79 @@ function commitDeleteSelection(){
   if (brushUndoStack.length > 20) brushUndoStack.shift();
 
   const d = originalImageData.data;
-  for (let i = 3; i < mask.length; i += 4) {
-    if (mask[i] > 0) d[i] = 0;
+  // TRIED then REVERTED (again — see the first REVERTED note above for the original round of
+  // this): fading the fringe toward neighboring pixels' colors, one ring at a time. Confirmed
+  // broken on a real detailed file: classifyToPalette/classesToImageData ignore partial alpha
+  // entirely (any pixel above the alpha<10 skip threshold renders fully OPAQUE in the final
+  // trace — see classesToImageData's flat `d[o+3]=255`), so the "fade" never actually renders
+  // soft at all, it just bakes in a solid, fully-opaque blotch of whatever the ring math computed.
+  // Worse, averaging multiple neighbors together at a fringe pixel that borders more than one real
+  // color (e.g. a hole edge touching both a jacket color and the black outline at once) fabricates
+  // a brand-new blended color that doesn't match any real palette entry — and once enough of those
+  // cluster along a long/complex deletion boundary, kMeansPalette's flat-pixel sampling picks them
+  // up as a legitimate extra color and broadcasts it to whichever UNRELATED pixels elsewhere in the
+  // whole image happen to be nearest to that fabricated shade. Confirmed directly: deleting one
+  // color region on a real detailed logo produced stray beige/grey/green speckle clusters inside
+  // completely unrelated black letterforms and snake-scale detail, nowhere near the actual
+  // deletion. Back to the plain hard erase — already proven clean on real files (see the first
+  // REVERTED note above) — until a genuine edge-smoothing approach is found that doesn't feed
+  // fabricated colors back into the palette.
+  const maskW = originalImageData.width, maskH = originalImageData.height;
+  // `touched` marks every pixel the mask has ANY coverage on — including partial-coverage fringe
+  // pixels, not just fully-covered ones — since those still need their stale RGB fixed below.
+  const touched = new Uint8Array(maskW * maskH);
+  for (let i = 3, p = 0; i < mask.length; i += 4, p++) {
+    if (mask[i] > 0) {
+      touched[p] = 1;
+      // SECOND bug found here, on top of the RGB one below: mctx.fill() already anti-aliases the
+      // deleted shape's smooth vector curve into the mask — real partial-coverage values (1-254),
+      // not a hard binary edge. The old code threw that away with `if (mask[i] > 0) d[i] = 0`,
+      // treating ANY nonzero coverage as "fully erase," which re-quantized the boundary into a
+      // coarse staircase before the trace pipeline ever got a chance to smooth it. Reducing alpha
+      // PROPORTIONALLY to the mask's real coverage instead preserves that sub-pixel curve shape,
+      // so the boundary that reaches upsampleImageData on the next trace is an accurate
+      // antialiased edge — matching how every other genuine edge in the source art already
+      // becomes a smooth curve — instead of a blocky approximation of one.
+      d[i] = Math.round(d[i] * (255 - mask[i]) / 255);
+    }
+  }
+
+  // Root cause of the miscolored half of this (found by tracing the pipeline, not guessed): every
+  // trace already upsamples the source with real bilinear filtering BEFORE classifying pixels (see
+  // upsampleImageData in runTrace). The alpha reduction above leaves the DELETED shape's own RGB
+  // sitting underneath every touched pixel, so that upsample step would blend the stale deleted
+  // color against the real neighboring RGB at the boundary, and classifyToPalette nearest-matches
+  // that blend to whichever palette entry happens to be closest — often the wrong one. Fix:
+  // recolor every touched pixel to its ONE nearest real (untouched) neighbor's exact RGB — never
+  // averaged across multiple differing neighbors, which is what an earlier reverted attempt above
+  // got wrong (blending fabricated a brand-new color that isn't in the real palette). Combined with
+  // the proportional alpha above, this gives the upsample step "real color, partial/zero alpha"
+  // blending against "real color, full alpha" at the boundary: a normal, correctly-colored,
+  // correctly-shaped antialiased edge, the same mechanism every other boundary in the image
+  // already relies on. Only pixels near the boundary matter (that's all the upsample's filter
+  // kernel reaches); pixels deep inside a large deletion stay fully transparent and untouched.
+  const RECOLOR_RING_PX = 2;
+  for (let ring = 0; ring < RECOLOR_RING_PX; ring++) {
+    const painted = [];
+    for (let y = 0; y < maskH; y++) {
+      for (let x = 0; x < maskW; x++) {
+        const p = y * maskW + x;
+        if (!touched[p]) continue;
+        let src = -1;
+        if (x > 0 && !touched[p - 1]) src = p - 1;
+        else if (x < maskW - 1 && !touched[p + 1]) src = p + 1;
+        else if (y > 0 && !touched[p - maskW]) src = p - maskW;
+        else if (y < maskH - 1 && !touched[p + maskW]) src = p + maskW;
+        if (src === -1) continue; // no real neighbor reachable yet — a later ring may still reach it
+        painted.push(p, src);
+      }
+    }
+    for (let i = 0; i < painted.length; i += 2) {
+      const p = painted[i], srcP = painted[i + 1];
+      const o = p * 4, so = srcP * 4;
+      d[o] = d[so]; d[o + 1] = d[so + 1]; d[o + 2] = d[so + 2]; // alpha untouched — keeps whatever the proportional step set
+      touched[p] = 0; // now carries a real color — lets the next ring reach one pixel further in
+    }
   }
   ctx.putImageData(originalImageData, 0, 0); // keep the raster canvas in sync with originalImageData, like the freehand brush does
 
@@ -2384,16 +2567,17 @@ function commitDeleteSelection(){
   // (e.g. two orange shades one shade apart), and the classifier flickered between them pixel by
   // pixel across what should have been one solid region — exploding a clean 32-path trace into
   // 271 fragmented paths. Re-arming the same one-shot auto-detect used on fresh image loads lets
-  // the very next Color-mode trace correct colorCount back down (see runTrace's color branch)
-  // instead of leaving it stale. Harmless to set even in B&W mode or when nothing needs
-  // correcting — same no-op-if-already-right guard as the fresh-load case.
-  colorCountAutoPending = true;
+  // the very next trace correct colorCount back down (see runTrace's color/greyscale branch)
+  // instead of leaving it stale. Both modes' flags are re-armed since a delete's pixel-level
+  // change affects the true count in either color space; harmless to set even in B&W mode or when
+  // nothing needs correcting — same no-op-if-already-right guard as the fresh-load case.
+  colorCountAutoPendingByMode = { color: true, greyscale: true };
 
   cancelDeleteSelection();
-  if (autoRevectorizeCheckbox.checked) scheduleTrace();
+  needsRetrace = true;
 }
 
-deleteScopeSelect.addEventListener('change', () => {
+deleteScopeSelect.addEventListener('change', async () => {
   const scope = deleteScopeSelect.value;
   deleteToleranceRow.style.display = scope === 'tolerance' ? 'block' : 'none';
   svgHolder.classList.toggle('delete-active', scope !== 'off');
@@ -2404,6 +2588,11 @@ deleteScopeSelect.addEventListener('change', () => {
     brushModeSelect.value = 'off';
     brushModeSelect.dispatchEvent(new Event('change'));
     if (originalImageData){
+      // Delete-shapes targets the rendered <path> elements directly — if a brush stroke or a
+      // previous delete was staged but never viewed/downloaded (needsRetrace), those paths would
+      // still reflect the OLD pixels, so clicks would target/erase the wrong geometry. Catch up
+      // first, same as switching to Vector view manually.
+      await ensureFreshTrace();
       setView(true); // click-delete targets rendered <path> elements, which only exist in Vector view
       renderZoomSize();
     }
