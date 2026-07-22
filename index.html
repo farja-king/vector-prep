@@ -54,7 +54,7 @@
      real detail, starving the filter and silently falling back to unfiltered (anti-aliasing-noise-
      contaminated) sampling on exactly the images that most needed the filter. Now uses a fixed 2px
      check, matching estimateTrueColorCount's own (already-correct) call.
-  9. Delete-shapes edge quality — FOUR rounds on the same spot, all reverted, settled back on the
+  9. Delete-shapes edge quality — FIVE rounds on the same spot, all reverted, settled back on the
      plain hard erase (binary alpha cut, no recolor). Full history, so nobody re-attempts these:
      - Round 1 (blend+fade fringe RGB, varying alpha): broken — classifyToPalette/classesToImageData
        ignore partial alpha entirely (anything above alpha 10 renders fully OPAQUE), so the "fade"
@@ -76,12 +76,24 @@
        edges came right back on every export — confirmed directly: exports were reproducing the
        exact artifact this round was meant to fix, because the retrace itself was still broken, not
        just hidden by never running it.
-     - Round 4 (current): reverted to the plain hard erase — `if (mask[i] > 0) d[i] = 0`, nothing
-       else. This is the only version ever confirmed clean on a real file. Deletions now have a hard
-       pixel-edge boundary instead of a smooth one — accepted tradeoff after four attempts at smooth
-       edges all either corrupted colors or turned out to be a stale-preview illusion. Don't
-       re-attempt fringe smoothing here without a way to test against a real file independent of
-       screenshots (Round 3's false-positive came directly from not being able to do that).
+     - Round 4 (proportional alpha + single-real-neighbor recolor, 2px reach, same technique as
+       Round 3): this time verified with a SCRIPTED repro against a live instance (a local test
+       server + driving the real app functions directly, not screenshots) — confirmed clean on a
+       single large color region (deleted green on the real Cobra file: exact remaining palette,
+       zero fabricated colors, no geometry/complexity anomalies). Shipped, then confirmed BROKEN by
+       Martin on the SAME file's teeth/rib area — dense, thin, tightly alternating white/tan/black
+       bands where a 2px recolor reach isn't enough to fully cover what a deletion touches, leaving
+       patchy/speckled partial results. The lesson: even a scripted, non-screenshot verification is
+       only as good as the test CASE — a single large color region isn't representative of dense
+       thin-banded geometry, and this whole saga has now broken on a new real case every single
+       time it looked genuinely fixed.
+     - Round 5 (current): reverted to the plain hard erase — `if (mask[i] > 0) d[i] = 0`, nothing
+       else. This is the only version ever confirmed clean across every real case thrown at it.
+       Deletions have a hard pixel-edge boundary instead of a smooth one — accepted tradeoff after
+       five attempts at smooth edges every one of which broke something else. If picked up again:
+       test against BOTH a single large color region AND dense/thin-banded geometry (teeth, ribs,
+       stripes) before trusting any result, ideally via scripted repro (see Round 4) rather than
+       screenshots alone — neither test category alone has been sufficient so far.
   10. Removed the "Auto re-vectorize after each stroke" checkbox entirely (Touch-up brush + Delete
       shapes both used it). It defaulted ON, but whenever a session had it off, edits (brush strokes,
       deletes) updated originalImageData immediately while the Vector preview AND lastSvgString (what
@@ -2581,14 +2593,18 @@ function commitDeleteSelection(){
   if (brushUndoStack.length > 20) brushUndoStack.shift();
 
   const d = originalImageData.data;
-  // THREE rounds of edge-smoothing attempts tried and reverted here (proportional alpha + single-
-  // neighbor recolor; recolor with a hard binary cut; fade-to-neighbor-average with varying alpha)
-  // — see git history on this file for the full detail of each. All either left the deleted
-  // shape's stale RGB to ghost back in, or fabricated new colors that contaminated kMeansPalette
-  // and broadcast speckle to unrelated parts of the image, confirmed on real detailed files every
-  // time. Settled back on the plain hard erase: it's the only version that's actually been clean
-  // on a real file across this whole project. Costs a hard pixel-edge on deletions instead of a
-  // smooth one — acceptable; a corrupted export is a worse problem than a jagged edge.
+  // FOURTH attempt at smoothing this boundary — see git history for rounds 1-3 (fringe ghosting,
+  // fabricated palette colors). Round 4 (proportional alpha + single-real-neighbor recolor,
+  // 2px reach) verified clean via a scripted repro on a single large color region (green, on the
+  // real Cobra file) — no fabricated colors, no geometry anomalies. BUT: confirmed broken by
+  // Martin on the SAME file's teeth/rib area — thin, tightly alternating white/tan/black bands
+  // where a 2px recolor reach isn't enough to fully cover what a deletion touches, leaving
+  // patchy/speckled partial results instead of a clean fill or a clean hole. Reverted again — the
+  // large-region test case wasn't representative of this kind of dense, thin-banded geometry, and
+  // every attempt at this so far has broken on SOME real case not covered by whatever was tested.
+  // Round 4's code is preserved in git history (search "FOURTH attempt" in old commits) if picked
+  // up again — but don't re-enable it without testing specifically against dense/thin-banded
+  // regions like this one, not just a single large color region.
   for (let i = 3; i < mask.length; i += 4) {
     if (mask[i] > 0) d[i] = 0;
   }
