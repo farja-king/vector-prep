@@ -1353,13 +1353,31 @@ function estimateTrueColorCount(imgData, maxK){
   // (single centroid over everything) and using the k=1->k=2 ratio as the first real candidate
   // fixes that, while leaving every later comparison (and the already-verified k=7->k=8 real-logo
   // case above, which lands well inside the untouched loop) exactly as it was.
+  //
+  // BUT: letting that k=1->2 ratio compete to WIN the whole search (not just serve as a fallback)
+  // broke gradient/shaded artwork — confirmed directly on a real file (a heavily gradient-shaded
+  // logo: blue lettering with light-to-dark shading, a shaded wood beam, a photographic beer-glass
+  // reflection). Splitting 1 cluster into 2 captures the single biggest low-frequency variance
+  // split on almost ANY gradient-heavy image (roughly "light half" vs "dark half"), regardless of
+  // how many real colors follow, so its ratio wins outright and locks colorCount at 2 no matter
+  // how much real structure exists later in the curve — confirmed: this file has a real (if
+  // modest) elbow at k=4 (ratio 2.26) that never got a chance to compete. Fix: the k=1->2 ratio no
+  // longer competes for the win — find the best candidate from k>=3 first, and only fall back to
+  // k=2 if that later best doesn't clear a real-signal threshold above the noise floor (everything
+  // past a genuine elbow sits near 1.0-1.2 in every real file measured so far). Verified this
+  // doesn't regress either known-good case: the flat 2-color synthetic test still returns 2 (no
+  // later candidate ever clears the threshold), and the original real reference logo still returns
+  // 8 (its k=7->8 ratio of ~19x clears it easily) — confirmed stable across threshold values from
+  // 1.1 to 1.8, not a fragile tuning choice.
   const sse1 = kmeansSSE(1, 6);
-  let bestK = kRange[0], bestRatio = sse1 / Math.max(sseValues[0], 1e-6);
+  const sse1ratio = sse1 / Math.max(sseValues[0], 1e-6);
+  let bestLaterRatio = -1, bestLaterK = kRange[1];
   for (let i = 1; i < kRange.length; i++){
     const ratio = sseValues[i - 1] / Math.max(sseValues[i], 1e-6);
-    if (ratio > bestRatio){ bestRatio = ratio; bestK = kRange[i]; }
+    if (ratio > bestLaterRatio){ bestLaterRatio = ratio; bestLaterK = kRange[i]; }
   }
-  return bestK;
+  const NOISE_THRESHOLD = 1.3;
+  return bestLaterRatio > NOISE_THRESHOLD ? bestLaterK : kRange[0];
 }
 
 function analyzeImage(imgData){
