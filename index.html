@@ -277,7 +277,7 @@
   }
   .drop.drag{border-color:var(--thread-red); background:#fff;}
   .drop p{margin:0; font-size:15px;}
-  .drop .hint{font-family:'IBM Plex Mono',monospace; font-size:11px; color:#8a8578; margin-top:8px;}
+  .drop .hint{font-family:'IBM Plex Mono',monospace; font-size:11px; color:#000;font-weight:500; margin-top:8px;}
   input[type=file]{display:none;}
 
   .stage{display:none; margin-top:28px;}
@@ -319,7 +319,7 @@
     font-size:11px;
     text-transform:uppercase;
     letter-spacing:.06em;
-    color:#8a8578;
+    color:#000;font-weight:500;
     margin-bottom:10px;
     display:flex;
     justify-content:space-between;
@@ -341,7 +341,7 @@
   .view-toggle button.active{background:var(--ink); color:var(--white);}
 
   .zoom-control{display:flex; gap:8px; align-items:center; font-family:'IBM Plex Sans',sans-serif; text-transform:none; letter-spacing:normal;}
-  .zoom-control label{font-size:11px; color:#8a8578; margin:0;}
+  .zoom-control label{font-size:11px; color:#000;font-weight:500; margin:0;}
   .zoom-control input[type=range]{width:80px; margin:0;}
   .zoom-control .zoom-val{font-size:11px; font-family:'IBM Plex Mono',monospace; font-weight:bold; width:35px; text-align:right;}
 
@@ -391,7 +391,7 @@
     gap:8px;
   }
   .tool-block h3 .n{font-family:'IBM Plex Mono',monospace; font-size:11px; color:var(--thread-red);}
-  .tool-block p.hint{font-size:11px;color:#8a8578;margin:4px 0 12px;line-height:1.4;}
+  .tool-block p.hint{font-size:11px;color:#000;font-weight:500;margin:4px 0 12px;line-height:1.4;}
 
   button.action{
     width:100%;
@@ -436,14 +436,14 @@
   .start-over-btn:active{transform:translateY(1px);}
 
   .row{display:flex; gap:8px; margin-bottom:8px; align-items:center;}
-  .row label{font-size:11px; color:#8a8578; display:block; margin-bottom:3px; font-family:'IBM Plex Mono',monospace; flex:1;}
+  .row label{font-size:11px; color:#000;font-weight:500; display:block; margin-bottom:3px; font-family:'IBM Plex Mono',monospace; flex:1;}
   .row .val{width:44px; text-align:right; font-family:'IBM Plex Mono',monospace; font-size:12px; font-weight:bold; margin-top:8px;}
   input[type=range]{width:100%; accent-color:var(--thread-red);}
   select{width:100%;font-family:'IBM Plex Mono',monospace;font-size:12px;padding:6px 8px;border:1px solid #c9c2b2;background:#fff;}
 
   .slider-row{display:flex; gap:8px; align-items:flex-end; margin-bottom:8px;}
   .slider-row .slider-col{flex:1;}
-  .slider-row .slider-col label{font-size:11px; color:#8a8578; display:block; margin-bottom:3px; font-family:'IBM Plex Mono',monospace;}
+  .slider-row .slider-col label{font-size:11px; color:#000;font-weight:500; display:block; margin-bottom:3px; font-family:'IBM Plex Mono',monospace;}
 
   /* Custom up/down stepper rather than relying on the browser's native <input type=number>
      spinner — that spinner is inconsistent (hidden entirely in some browsers/zoom levels,
@@ -489,12 +489,12 @@
     width:26px; height:26px; border-radius:50%;
     border:2px solid var(--ink);
   }
-  .swatch-empty{font-size:11px; color:#8a8578; font-family:'IBM Plex Mono',monospace;}
+  .swatch-empty{font-size:11px; color:#000;font-weight:500; font-family:'IBM Plex Mono',monospace;}
 
   .meta{
     font-family:'IBM Plex Mono',monospace;
     font-size:11px;
-    color:#8a8578;
+    color:#000;font-weight:500;
     margin-top:6px;
     display:flex;
     justify-content:space-between;
@@ -506,7 +506,7 @@
   .footnote{
     margin-top:34px;
     font-size:12px;
-    color:#8a8578;
+    color:#000;font-weight:500;
     border-top:1px solid var(--paper-line);
     padding-top:14px;
     line-height:1.6;
@@ -584,7 +584,7 @@
             </div>
             <input type="number" class="num-input" id="thresholdNum" min="1" max="254" step="1" value="70">
           </div>
-          <label style="font-size:11px; color:#8a8578; display:block; margin-top:4px;">
+          <label style="font-size:11px; color:#000;font-weight:500; display:block; margin-top:4px;">
             <input type="checkbox" id="invert"> Invert (trace the light areas instead)
           </label>
           <button class="action ghost" id="resetTraceMode" style="margin-top:10px;">Reset Trace Mode to Defaults</button>
@@ -605,7 +605,7 @@
             <p class="hint">Click a color to give it its own curve fit / edge smoothing, overriding the shared Detail settings just for that color.</p>
             <div class="swatch-list" id="swatchList"><span class="swatch-empty">Trace an image to see colors</span></div>
             <div id="colorOverridePanel" style="display:none; margin-top:12px; padding-top:12px; border-top:1px solid var(--paper-line);">
-              <div style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:#8a8578;margin-bottom:8px;display:flex;align-items:center;gap:8px;justify-content:space-between;">
+              <div style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:#000;font-weight:500;margin-bottom:8px;display:flex;align-items:center;gap:8px;justify-content:space-between;">
                 <div style="display:flex;align-items:center;gap:8px;">
                   <span id="overrideColorSwatch" style="width:16px;height:16px;border-radius:50%;border:2px solid var(--ink);display:inline-block;"></span>
                   <span>Editing this color only</span>
@@ -664,6 +664,8 @@
                 </div>
               </div>
               <button class="action ghost" id="overrideUseGlobal">Use Global Settings for This Color</button>
+              <button class="action ghost" id="overrideDeleteColor" style="margin-top:8px; border-color:var(--thread-red); color:var(--thread-red);">Delete This Color</button>
+              <p class="hint" style="margin:6px 0 0;">Removes just this color and re-assigns its pixels to whichever remaining color is closest — the other colors and their own settings are untouched.</p>
             </div>
           </div>
         </div>
@@ -711,7 +713,7 @@
           <input type="number" class="num-input" id="smoothingNum" min="0" max="40" step="0.1" value="0.9">
         </div>
 
-        <label style="font-size:11px; color:#8a8578; display:block; margin-top:4px;">
+        <label style="font-size:11px; color:#000;font-weight:500; display:block; margin-top:4px;">
           <input type="checkbox" id="rightAngle" checked> Sharpen right-angle corners (logos/text)
         </label>
 
@@ -765,7 +767,7 @@
           </div>
           <button class="action ghost" id="eyedropperBtn" style="margin-bottom:12px;">🎨 Pick Color From Image</button>
         </div>
-        <label style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:#8a8578;">Brush size — <span id="brushSizeVal">30</span>px</label>
+        <label style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:#000;font-weight:500;">Brush size — <span id="brushSizeVal">30</span>px</label>
         <input type="range" id="brushSize" min="4" max="150" value="30">
         <div style="height:8px"></div>
         <p class="hint" style="margin-top:0;">Edits (brush strokes, deletes) are staged on the source pixels immediately — switching to VECTOR view or downloading automatically re-traces first if anything's changed, so there's never a separate step needed.</p>
@@ -777,7 +779,7 @@
         <h3><span class="n">04</span> Export</h3>
         <button class="action" id="downloadSvg" style="margin-bottom:8px;">Download SVG</button>
         <button class="action ghost" id="downloadPng">Download PNG Preview</button>
-        <div id="traceStatus" style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:#8a8578;margin-top:8px;min-height:14px;"></div>
+        <div id="traceStatus" style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:#000;font-weight:500;margin-top:8px;min-height:14px;"></div>
       </div>
     </div>
   </div>
@@ -828,6 +830,10 @@ const viewVectorBtn = document.getElementById('viewVector');
 let originalImageData = null; // pristine pixels straight from the loaded image — every trace re-runs from this, never from a previous trace's output
 let lastSvgString = '';
 let lastPalette = []; // Color mode's current palette — indices here are what colorOverrides keys into
+// Set by "Delete this color" — an exact palette (same RGB values, no re-clustering) to use
+// instead of a fresh kMeansPalette call. Cleared (falls back to fresh detection) whenever
+// colorCount no longer matches its length — see runTrace's color branch.
+let pinnedPalette = null;
 let pristineImageData = null; // untouched backup for the Restore brush and Reset All Touch-ups
 let brushUndoStack = []; // snapshots of originalImageData.data taken before each stroke
 let traceTimeout = null;
@@ -990,6 +996,7 @@ function loadImageFile(file){
       // per-color overrides from the previous image would silently apply to the wrong colors.
       colorOverrides = {};
       selectedColorIndex = null;
+      pinnedPalette = null;
       colorOverridePanel.style.display = 'none';
       stage.classList.add('on');
       dimsEl.textContent = canvas.width + ' × ' + canvas.height;
@@ -1027,6 +1034,7 @@ document.getElementById('reset').addEventListener('click', () => {
   colorCountAutoPendingByMode = { color: false, greyscale: false };
   colorOverrides = {};
   selectedColorIndex = null;
+  pinnedPalette = null;
   colorOverridePanel.style.display = 'none';
   stage.classList.remove('on');
   fileInput.value = '';
@@ -1049,6 +1057,9 @@ modeSelect.addEventListener('change', () => {
   // instead of implying hues that were never in the output.
   colorCountLabel.textContent = isGreyscale ? 'Grey levels' : 'Color count';
   paletteBlockTitle.textContent = isGreyscale ? 'Detected shades' : 'Detected palette';
+  // A pinned (post-delete) palette holds RGB values from the PREVIOUS mode's color space —
+  // meaningless once colorSource itself changes to a different mode's pixels.
+  pinnedPalette = null;
   // No auto-trace on mode switch — pick a mode, then click Vectorize.
 });
 
@@ -1219,6 +1230,22 @@ document.getElementById('overrideUseGlobal').addEventListener('click', () => {
   scheduleTrace();
 });
 
+document.getElementById('overrideDeleteColor').addEventListener('click', () => {
+  // Same floor as the Color count slider itself (min="2") — there's always at least one real
+  // color plus the transparent background, so dropping to 1 doesn't make sense here either.
+  if (selectedColorIndex === null || lastPalette.length <= 2) return;
+  pinnedPalette = lastPalette.filter((_, i) => i !== selectedColorIndex);
+  // Indices are about to shift (everything after the deleted color moves down by one) — clearing
+  // colorOverrides rather than trying to remap it is the same safe-reset pattern already used
+  // elsewhere in this file for other structural palette changes (see the delete-shapes fix notes).
+  colorOverrides = {};
+  selectedColorIndex = null;
+  colorOverridePanel.style.display = 'none';
+  colorCount.value = pinnedPalette.length;
+  colorCountNum.value = pinnedPalette.length;
+  scheduleTrace();
+});
+
 // Just hides the panel to save space — unlike "Use Global Settings" above, this does NOT discard
 // selectedColorIndex or colorOverrides, so whatever was tuned stays applied. Clicking a swatch
 // (any swatch, including the one just closed) reopens it via selectColorForOverride, which always
@@ -1241,6 +1268,7 @@ document.getElementById('resetTraceMode').addEventListener('click', () => {
 
 const COLOR_COUNT_DEFAULT = 8;
 document.getElementById('resetColorCount').addEventListener('click', () => {
+  pinnedPalette = null; // back to fresh k-means detection at the default count, discarding any deletes
   colorCount.value = COLOR_COUNT_DEFAULT;
   colorCount.dispatchEvent(new Event('input'));
 });
@@ -1612,6 +1640,7 @@ document.getElementById('suggestSettings').addEventListener('click', () => {
     // which is the right tool for "how many colors matter" on continuous-tone images.
     const exactCount = countExactFlatColors(countSource, 32);
     const suggested = exactCount <= 32 ? exactCount : estimateTrueColorCount(countSource, 24);
+    pinnedPalette = null; // fresh detection requested — discard any previously deleted colors
     colorCount.value = Math.max(2, Math.min(32, suggested));
     colorCount.dispatchEvent(new Event('input'));
   }
@@ -1653,7 +1682,14 @@ document.getElementById('suggestSettings').addEventListener('click', () => {
 // The explicit, one-click "run the first trace" step — loading an image or switching modes no
 // longer auto-traces (see loadImageFile / modeSelect's handlers), so this is what actually kicks
 // it off. Everything after that (sliders, Delete-shapes, Download) works exactly as it already did.
-document.getElementById('vectorizeBtn').addEventListener('click', () => scheduleTrace(0));
+document.getElementById('vectorizeBtn').addEventListener('click', () => {
+  // Switch to the Vector view immediately so the result of clicking Vectorize is always what's
+  // on screen — previously a trace could complete while still looking at Source, making it look
+  // like nothing happened.
+  setView(true);
+  renderZoomSize();
+  scheduleTrace(0);
+});
 
 // Re-arms whichever one-shot "first look at this image" auto-detect belongs to the CURRENT mode
 // (Threshold/Invert for B&W, Color/Grey-level count for Color/Greyscale — see autoFixPending /
@@ -2231,7 +2267,17 @@ function runTrace(){
         // supersampling, only shape smoothness does) and then supplied directly to ImageTracer,
         // bypassing its own unreliable quantizer entirely.
         const requestedColors = parseInt(colorCount.value);
-        const palette = kMeansPalette(colorSource, requestedColors, 12);
+        // A "Delete this color" click pins the exact remaining palette (same RGB values, nothing
+        // re-clustered) instead of asking k-means for one fewer color — a fresh k-means run at a
+        // lower k re-partitions ALL the pixels from scratch and has no way to know WHICH specific
+        // color you wanted gone, so it can just as easily reshuffle or merge a totally different
+        // pair. Pinning guarantees the other colors are untouched; classifyToPalette naturally
+        // folds the deleted color's own pixels into whichever remaining color is now nearest.
+        // Falls back to fresh detection the moment colorCount no longer matches the pinned size
+        // (the user moved the slider away, ran Suggest Settings, or reset to default).
+        const palette = (pinnedPalette && pinnedPalette.length === requestedColors)
+          ? pinnedPalette
+          : kMeansPalette(colorSource, requestedColors, 12);
         lastPalette = palette;
         const classes = classifyToPalette(workingData, palette);
 
