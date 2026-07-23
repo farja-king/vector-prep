@@ -126,6 +126,25 @@
         of bailing out and relying on a second async trace to catch up — verified by scripting the
         exact repro (delete both green shades on the real Cobra file, force a fresh trace, assert the
         deleted colors are absent from lastSvgString) before and after the fix.
+  12. Fixed colorOverrides going stale after a delete-shapes commit — the reported "perfect
+      preview, then pixelated/random-colour paths after export" symptom. colorOverrides is keyed
+      by PALETTE INDEX, but a delete forces the next trace's kMeansPalette to recompute from
+      scratch, and k-means has no obligation to keep any real color at the index it held before.
+      Confirmed by direct scripted repro against IMG_2685.PNG: gave orange (index 2) an extreme
+      +100 contrast override, deleted orange entirely, and on the next trace TAN silently landed
+      at index 2 and inherited orange's override — rendered rgb(255,158,0) instead of its real
+      rgb(227,143,17). Since the same object also drives curveFit/edgeSmoothing/speckle for that
+      color (GEOMETRY, not just color — see settingsForColor in runTrace), a misapplied override
+      can just as easily produce jagged/pixelated geometry on an unrelated color as a wrong hue —
+      matching both symptoms from one root cause. loadImageFile already had this exact guard for a
+      fresh image load (same reasoning, same reset); a delete carries identical risk and simply
+      never had it. Fix: clear colorOverrides / selectedColorIndex / hide the override panel on
+      every delete-shapes commit, in commitDeleteSelection. Verified: re-ran the exact repro
+      post-fix — overrides correctly cleared, tan renders at its real color, no console errors.
+      NOTE: the freehand Touch-up brush's endBrushStroke shares the identical risk (a stroke can
+      also change the true palette composition on the next trace) but was NOT touched — unconfirmed
+      there, and per the working agreement below, don't extend this fix to that path without
+      testing it first and confirming with Martin.
 
   INTENTIONAL BEHAVIOR, NOT BUGS:
   - Deleting a shape leaves a TRANSPARENT hole, not a fill of the surrounding color. Explicitly
