@@ -672,6 +672,21 @@
       <div class="tool-block">
         <h3><span class="n">01</span> Detail</h3>
         <p class="hint">Images are automatically supersampled before tracing for smoother, more accurate curves — these controls fine-tune fidelity on top of that.</p>
+        <div class="row" style="margin-bottom:12px;">
+          <select id="supersample">
+            <option value="auto" selected>Supersampling: Auto (picks based on image size)</option>
+            <option value="1">Supersampling: 1x</option>
+            <option value="1.5">Supersampling: 1.5x</option>
+            <option value="2">Supersampling: 2x</option>
+            <option value="2.5">Supersampling: 2.5x</option>
+            <option value="3">Supersampling: 3x</option>
+            <option value="4">Supersampling: 4x</option>
+            <option value="5">Supersampling: 5x</option>
+            <option value="6">Supersampling: 6x</option>
+            <option value="8">Supersampling: 8x</option>
+          </select>
+        </div>
+        <p class="hint" style="margin:-6px 0 12px;">Higher = the source is upscaled more before tracing, giving the curve fitter finer pixel data to work from — sharper, more precise curves at the cost of a slower trace and a bigger SVG. Auto picks a sensible value based on image size; raise it manually for maximum precision on a small or detail-heavy source.</p>
         <div class="slider-row">
           <div class="slider-col">
             <label>Curve smoothing (higher = smoother; very low values trace the raw pixel staircase instead of fitting a curve)</label>
@@ -805,6 +820,7 @@ const simplifyNum = document.getElementById('simplifyNum');
 const speckle = document.getElementById('speckle');
 const speckleNum = document.getElementById('speckleNum');
 const rightAngle = document.getElementById('rightAngle');
+const supersample = document.getElementById('supersample');
 
 const viewSourceBtn = document.getElementById('viewSource');
 const viewVectorBtn = document.getElementById('viewVector');
@@ -1213,6 +1229,7 @@ document.getElementById('overrideCollapse').addEventListener('click', () => {
 
 invert.addEventListener('change', () => scheduleTrace());
 rightAngle.addEventListener('change', () => scheduleTrace());
+supersample.addEventListener('change', () => scheduleTrace());
 
 const TRACE_MODE_DEFAULTS = { threshold: 70, invert: false };
 document.getElementById('resetTraceMode').addEventListener('click', () => {
@@ -1418,6 +1435,154 @@ function analyzeImage(imgData){
   };
 }
 
+// The elbow method in estimateTrueColorCount judges how many colors are "real" by how much each
+// additional cluster reduces total error (SSE) — which structurally under-counts a color that
+// only covers a small area of the image, since removing/merging a small patch barely moves SSE
+// no matter how solid and distinct that color actually is. That's the "doesn't recognize all the
+// colors straight away" bug: a real flat spot-color used for a small detail (a thin accent, a
+// small logomark, a "TM") never produces a visible elbow, so it silently gets folded into a
+// nearby cluster and the user has to manually raise the color count to recover it.
+// Fix: for genuinely flat/vector-style source art (which is what this tool is for), just count
+// the actual distinct flat colors directly instead of estimating from error curves — exact
+// enumeration can't miss a color just because its area is small, only if it has literally zero
+// non-anti-aliased pixels anywhere. Cap the scan so a photo/gradient image (where "distinct flat
+// colors" isn't a meaningful concept and would explode into hundreds of near-duplicates) bails
+// out and falls back to the existing elbow-based estimate instead.
+function rgbToHsv(r, g, b){
+  const max = Math.max(r, g, b), min = Math.min(r, g, b), delta = max - min;
+  const v = max;
+  const s = max === 0 ? 0 : delta / max;
+  let h = 0;
+  if (delta !== 0){
+    if (max === r) h = 60 * (((g - b) / delta) % 6);
+    else if (max === g) h = 60 * ((b - r) / delta + 2);
+    else h = 60 * ((r - g) / delta + 4);
+    if (h < 0) h += 360;
+  }
+  return [h, s, v];
+}
+
+// Real flat-color art commonly has a single "logical" color rendered with internal shading (a
+// flame drawn light-to-dark, a gradient sheen on a stripe) that can drift a good 20-30 degrees in
+// hue across the shape, not just in lightness. A first version of this function clustered each
+// pixel against the nearest EXISTING cluster mean (RGB distance, then hue distance) — greedy and
+// order-dependent, so a slow, continuous, no-natural-gap hue drift (confirmed on a real reference
+// badge: its red flame drifts hue 356 -> 32 with no gap before yellow starts at ~55) gets carved
+// into arbitrary extra clusters purely based on scan order, not on where the real color families
+// actually are.
+// Fix: build a full hue histogram (and a separate value histogram for near-white/grey/black
+// pixels, where hue is meaningless) across every qualifying pixel, lightly smooth it, and find
+// actual DENSITY PEAKS — mirroring how Otsu finds the real split point in a luminance histogram
+// rather than guessing a threshold. A real design color shows up as a tall, narrow peak (badge:
+// red ~3300 count peak, yellow ~54000, blue ~57000); anti-aliasing/dithering between two real
+// colors shows up as a low, broad shoulder in between, never forming its own comparable peak. Only
+// keep peaks separated enough from a taller neighboring peak (non-max suppression) and with enough
+// mass to not be noise. Verified directly against the real badge file: returns 6 (white, black,
+// blue, yellow, red, plus a real secondary lighter-blue shade the stripes actually contain) versus
+// the elbow method's undercount of 4 that started this whole investigation.
+function findHistogramPeaks(bins, n, circular, smoothWin, massWin, minSep, noiseFloor){
+  const smoothed = new Array(n).fill(0);
+  for (let i = 0; i < n; i++){
+    let sum = 0;
+    for (let k = -smoothWin; k <= smoothWin; k++){
+      let j = i + k;
+      if (circular) j = ((j % n) + n) % n;
+      else if (j < 0 || j >= n) continue;
+      sum += bins[j];
+    }
+    smoothed[i] = sum;
+  }
+  const candidates = [];
+  for (let i = 0; i < n; i++){
+    let prevIdx = i - 1, nextIdx = i + 1;
+    if (circular){ prevIdx = ((prevIdx % n) + n) % n; nextIdx = nextIdx % n; }
+    else if (prevIdx < 0 || nextIdx >= n) continue;
+    if (smoothed[i] > 0 && smoothed[i] >= smoothed[prevIdx] && smoothed[i] >= smoothed[nextIdx]){
+      let mass = 0;
+      for (let k = -massWin; k <= massWin; k++){
+        let j = i + k;
+        if (circular) j = ((j % n) + n) % n;
+        else if (j < 0 || j >= n) continue;
+        mass += bins[j];
+      }
+      candidates.push([i, mass]);
+    }
+  }
+  candidates.sort((a, b) => b[1] - a[1]);
+  const accepted = [];
+  for (const c of candidates){
+    if (c[1] < noiseFloor) continue;
+    let tooClose = false;
+    for (const a of accepted){
+      let d = Math.abs(a[0] - c[0]);
+      if (circular) d = Math.min(d, n - d);
+      if (d < minSep){ tooClose = true; break; }
+    }
+    if (!tooClose) accepted.push(c);
+  }
+  return accepted;
+}
+
+function countExactFlatColors(imgData, capK){
+  const { width, height, data } = imgData;
+  // Full resolution (or as close as is reasonably fast) so a small/thin region of a unique color
+  // isn't stepped over by subsampling the way the elbow method's sampling does.
+  const step = Math.max(1, Math.floor(Math.sqrt((width * height) / 1500000)));
+  const checkDist = 1;
+  const SAT_THRESHOLD = 0.18; // below this, hue is noisy/meaningless — treat as achromatic
+  const FLAT_HUE_TOL = 25; // degrees a neighbor's hue may drift and still count as "flat" (tolerates internal shading)
+  const FLAT_VALUE_TOL = 60; // 0-255, same idea for achromatic neighbors
+  const hueBins = new Array(360).fill(0);
+  const valBins = new Array(256).fill(0);
+  let totalFlat = 0;
+  for (let y = 0; y < height; y += step){
+    for (let x = 0; x < width; x += step){
+      const i = (y * width + x) * 4;
+      if (data[i + 3] < 10) continue;
+      const [h, s, v] = rgbToHsv(data[i], data[i + 1], data[i + 2]);
+      const selfAchromatic = s < SAT_THRESHOLD;
+      let flat = true;
+      const offsets = [[-checkDist, 0], [checkDist, 0], [0, -checkDist], [0, checkDist]];
+      for (const [dx, dy] of offsets){
+        const nx = x + dx, ny = y + dy;
+        if (nx < 0 || nx >= width || ny < 0 || ny >= height) continue;
+        const ni = (ny * width + nx) * 4;
+        if (data[ni + 3] < 10){ flat = false; break; }
+        const [nh, ns, nv] = rgbToHsv(data[ni], data[ni + 1], data[ni + 2]);
+        const nAchromatic = ns < SAT_THRESHOLD;
+        if (selfAchromatic !== nAchromatic){ flat = false; break; }
+        if (selfAchromatic){
+          if (Math.abs(v - nv) > FLAT_VALUE_TOL){ flat = false; break; }
+        } else {
+          const d = Math.abs(h - nh);
+          if (Math.min(d, 360 - d) > FLAT_HUE_TOL){ flat = false; break; }
+        }
+      }
+      if (!flat) continue;
+      totalFlat++;
+      if (selfAchromatic){
+        let vb = Math.floor(v); if (vb >= 256) vb = 255;
+        valBins[vb]++;
+      } else {
+        let hb = Math.floor(h); if (hb >= 360) hb = 359;
+        hueBins[hb]++;
+      }
+    }
+  }
+  if (totalFlat < 50) return capK + 1; // not enough signal to trust — let the caller fall back
+  const noiseFloor = Math.max(40, totalFlat * 0.008);
+  // 45 degrees, not 35: confirmed on the real badge file that a dithering/AA artifact along the
+  // long blue/white stripe boundary can form a hue peak with pixel mass AND connected-region size
+  // statistically indistinguishable from a genuine small color (the red flame) — no threshold on
+  // mass or area alone separates them. What does separate them: every pair of ACTUAL distinct
+  // design colors in that file sits at least 65 degrees apart in hue, while the artifact peak sat
+  // only 38 degrees from the real blue peak. 45 comfortably suppresses artifacts that close to an
+  // already-accepted peak while staying well under the 65-degree floor real distinct hues sat at.
+  const huePeaks = findHistogramPeaks(hueBins, 360, true, 3, 12, 45, noiseFloor);
+  const valPeaks = findHistogramPeaks(valBins, 256, false, 3, 20, 60, noiseFloor);
+  return huePeaks.length + valPeaks.length;
+}
+
 document.getElementById('suggestSettings').addEventListener('click', () => {
   if (!originalImageData) return;
   const a = analyzeImage(originalImageData);
@@ -1440,7 +1605,14 @@ document.getElementById('suggestSettings').addEventListener('click', () => {
     // two hues with identical luminance are one shade in greyscale output even though they're two
     // distinct colors in Color mode, so estimating off the raw RGB would overcount grey levels.
     const countSource = modeSelect.value === 'greyscale' ? toGreyscaleImageData(originalImageData) : originalImageData;
-    colorCount.value = Math.max(2, Math.min(32, estimateTrueColorCount(countSource, 24)));
+    // Try exact enumeration first — it can't miss a real color just because it only covers a
+    // small area, unlike the elbow method below. If it stays within a small, sane palette size
+    // that's almost certainly a clean flat-color/vector source, so trust it directly. Only if it
+    // blows past that cap (photo, gradient, heavy shading) do we fall back to the elbow estimate,
+    // which is the right tool for "how many colors matter" on continuous-tone images.
+    const exactCount = countExactFlatColors(countSource, 32);
+    const suggested = exactCount <= 32 ? exactCount : estimateTrueColorCount(countSource, 24);
+    colorCount.value = Math.max(2, Math.min(32, suggested));
     colorCount.dispatchEvent(new Event('input'));
   }
 
@@ -1968,7 +2140,9 @@ function runTrace(){
     try {
       const isBw = modeSelect.value === 'bw';
       const tres = simplifyToTres(parseFloat(simplify.value));
-      const superScale = computeSuperScale(originalImageData.width, originalImageData.height);
+      const superScale = supersample.value === 'auto'
+        ? computeSuperScale(originalImageData.width, originalImageData.height)
+        : parseFloat(supersample.value);
       // Blur radius in upsampled-pixel space, scaled by how much we upsampled so one slider
       // notch means the same relative smoothing regardless of source resolution.
       const blurPx = parseFloat(smoothing.value) * (superScale / 2);
@@ -2040,7 +2214,11 @@ function runTrace(){
         if (colorCountAutoPendingByMode[autoPendingKey]) {
           colorCountAutoPendingByMode[autoPendingKey] = false;
           const priorColorCount = parseInt(colorCount.value);
-          const suggestedColorCount = Math.max(2, Math.min(32, estimateTrueColorCount(colorSource, 24)));
+          // See countExactFlatColors above suggestSettings: the elbow method under-counts colors
+          // that only cover a small area (e.g. this shield's red flame), so try exact enumeration
+          // first and only fall back to the elbow estimate when the image isn't a clean flat palette.
+          const exactColorCount = countExactFlatColors(colorSource, 32);
+          const suggestedColorCount = Math.max(2, Math.min(32, exactColorCount <= 32 ? exactColorCount : estimateTrueColorCount(colorSource, 24)));
           if (suggestedColorCount !== priorColorCount) {
             colorCount.value = suggestedColorCount;
             colorCountNum.value = suggestedColorCount;
