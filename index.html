@@ -2624,6 +2624,17 @@ function commitDeleteSelection(){
   // Round 4's code is preserved in git history (search "FOURTH attempt" in old commits) if picked
   // up again — but don't re-enable it without testing specifically against dense/thin-banded
   // regions like this one, not just a single large color region.
+  //
+  // Round 6 (tried and reverted, this session): swapped the coverage threshold from `> 0` to
+  // `>= 128` (nearest-rounding instead of rounding up), theorizing the aggressive `>0` cut was
+  // inflating the erase boundary outward and causing the staircase. Scripted repro against
+  // CobraLogo-highreso-trans.png proved the opposite: deleting the same hood-stripe band, `>0`
+  // produced 217 total paths (11 in the affected region) while `>=128` produced 244 (27 in the
+  // region) — MORE fragmentation, not less. Root cause: `>0` cleanly wipes the entire anti-aliased
+  // boundary ring, leaving one clean edge; `>=128` leaves a partial ring of the deleted color's
+  // fringe intact, which classifyToPalette then splits into extra tiny slivers along the boundary.
+  // Reverted to `>0` — it is the more fragmentation-resistant of the two, confirmed by direct A/B
+  // test on the real file, not just reasoning about it.
   for (let i = 3; i < mask.length; i += 4) {
     if (mask[i] > 0) d[i] = 0;
   }
