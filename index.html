@@ -2623,6 +2623,23 @@ function commitDeleteSelection(){
   // nothing needs correcting — same no-op-if-already-right guard as the fresh-load case.
   colorCountAutoPendingByMode = { color: true, greyscale: true };
 
+  // REAL BUG, confirmed by direct scripted repro against the real reference file (IMG_2685.PNG):
+  // colorOverrides is keyed by PALETTE INDEX (paletteIndex -> {curveFit, edgeSmoothing, speckle,
+  // brightness, contrast, saturation, vibrancy}), but a delete changes which real color k-means
+  // assigns to which index on the very next trace — nothing here was clearing or remapping stale
+  // entries. Confirmed directly: gave orange (index 2) an extreme +100 contrast override, deleted
+  // orange entirely, and on the next trace TAN silently landed at index 2 and inherited orange's
+  // override — rendered as rgb(255,158,0) instead of tan's real rgb(227,143,17). Since this same
+  // object also feeds curveFit/edgeSmoothing/speckle (GEOMETRY, not just color — see
+  // settingsForColor in runTrace's color/greyscale branch), a misapplied override can just as
+  // easily manifest as unexpected jagged/pixelated geometry on a totally unrelated color, not only
+  // a wrong hue. This is the same exact risk loadImageFile already guards against on a fresh image
+  // (see its own colorOverrides reset and comment above) — a delete carries identical risk, since
+  // it forces the exact same kind of full palette recompute, and was simply never covered.
+  colorOverrides = {};
+  selectedColorIndex = null;
+  colorOverridePanel.style.display = 'none';
+
   cancelDeleteSelection();
   invalidateInFlightTrace();
 }
