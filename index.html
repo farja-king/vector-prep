@@ -3204,12 +3204,11 @@ function commitDeleteSelection(){
   colorOverridePanel.style.display = 'none';
 
   cancelDeleteSelection();
-  // Don't invalidate the trace after delete — the preview SVG showing the deleted shapes removed
-  // is what the user has approved. Exporting should use that same SVG, not force a fresh trace
-  // on the modified pixels which would produce totally different paths (phantom re-trace bug).
-  // If they manually click "Re-vectorize Now", that will update it properly.
-  // invalidateInFlightTrace();
-  needsRetrace = false; // Mark that current SVG is valid for current pixel state
+  // Force ONE re-trace to update lastSvgString with deleted shapes removed. Since we commented out
+  // the re-arm of colorCountAutoPendingByMode, this trace uses the same settings as the preview
+  // (same color count, same Detail settings) — so it produces the same result but with lastSvgString
+  // updated to match the DOM. Export then uses the fresh lastSvgString without pixelation re-trace bug.
+  scheduleTrace();
 }
 
 deleteScopeSelect.addEventListener('change', async () => {
