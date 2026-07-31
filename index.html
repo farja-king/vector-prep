@@ -2684,7 +2684,18 @@ function runTrace(){
             const re = new RegExp(`<path[^>]*fill="rgb\\(${color.r},\\s*${color.g},\\s*${color.b}\\)"[^>]*\\/?>`, 'g');
             groupPaths.push(...(groupSvg.match(re) || []));
           });
-          if (groupPaths.length) mergedPaths.push(`<g transform="translate(${bx0},${by0})">${groupPaths.join('')}</g>`);
+          // Flatten paths with transform baked into each path element (ungrouped)
+          if (groupPaths.length) {
+            groupPaths.forEach(pathStr => {
+              // If there's a translate offset, add it as a transform attribute on the individual path
+              if (bx0 !== 0 || by0 !== 0) {
+                const withTransform = pathStr.replace(/\/>$/, ` transform="translate(${bx0},${by0})"/>`).replace(/<\/path>$/, ` transform="translate(${bx0},${by0})"></path>`);
+                mergedPaths.push(withTransform);
+              } else {
+                mergedPaths.push(pathStr);
+              }
+            });
+          }
         }
         svgString = `<svg viewBox="0 0 ${workingData.width} ${workingData.height}" version="1.1" xmlns="http://www.w3.org/2000/svg">${mergedPaths.join('')}</svg>`;
         renderPalette(palette);
@@ -3181,18 +3192,13 @@ function commitDeleteSelection(){
   }
   ctx.putImageData(originalImageData, 0, 0); // keep the raster canvas in sync with originalImageData, like the freehand brush does
 
-  // Deleting a whole color's shapes changes the TRUE number of distinct colors left in the
-  // image, but Color count itself doesn't know that and stays at whatever it was — confirmed
-  // directly (real reference logo): deleting a 5th real color while colorCount stayed at 5 forced
-  // kMeansPalette to invent a spurious near-duplicate cluster to fill the now-unneeded slot
-  // (e.g. two orange shades one shade apart), and the classifier flickered between them pixel by
-  // pixel across what should have been one solid region — exploding a clean 32-path trace into
-  // 271 fragmented paths. Re-arming the same one-shot auto-detect used on fresh image loads lets
-  // the very next trace correct colorCount back down (see runTrace's color/greyscale branch)
-  // instead of leaving it stale. Both modes' flags are re-armed since a delete's pixel-level
-  // change affects the true count in either color space; harmless to set even in B&W mode or when
-  // nothing needs correcting — same no-op-if-already-right guard as the fresh-load case.
-  colorCountAutoPendingByMode = { color: true, greyscale: true };
+  // DON'T re-arm the color-count auto-detect after a delete. The user has already approved the
+  // current color count by accepting the preview — re-detecting on export would produce a
+  // different trace (different colors/paths) than what they saw, which is the "phantom re-trace
+  // bug" where export looks totally different from preview. The pixel modification alone doesn't
+  // require re-detection; the next manual Vectorize will pick up the change if needed.
+  // Keeping this commented as context in case re-clustering becomes necessary for some reason.
+  // colorCountAutoPendingByMode = { color: true, greyscale: true };
 
   // REAL BUG, confirmed by direct scripted repro against the real reference file (IMG_2685.PNG):
   // colorOverrides is keyed by PALETTE INDEX (paletteIndex -> {curveFit, edgeSmoothing, speckle,
