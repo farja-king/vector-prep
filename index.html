@@ -1019,8 +1019,6 @@ document.getElementById('reset').addEventListener('click', () => {
   selectedColorIndex = null;
   pinnedPalette = null;
   colorOverridePanel.style.display = 'none';
-  imagePrepControls.style.display = 'none';
-  imagePrepStatus.textContent = '';
   stage.classList.remove('on');
   fileInput.value = '';
   ctx.clearRect(0, 0, canvas.width, canvas.height);
