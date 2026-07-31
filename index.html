@@ -1208,22 +1208,10 @@ function loadImageFile(file){
       // never mutated afterward, unlike originalImageData which the brush paints into directly.
       pristineImageData = new ImageData(new Uint8ClampedArray(originalImageData.data), originalImageData.width, originalImageData.height);
 
-      // Analyze and auto-apply image preprocessing
+      // Analyze image but DON'T auto-apply preprocessing — it was causing pixelated edges
+      // Users can manually adjust via the Image Prep sliders if needed
       prepAnalysis = detectPrepNeeds(originalImageData);
       prepSettings = { sharpness: 0, contrast: 0, saturation: 0 };
-
-      // Auto-apply smart preprocessing based on analysis
-      if (prepAnalysis.needsSharpening || prepAnalysis.needsContrast || prepAnalysis.needsSaturation){
-        const autoSettings = {
-          sharpness: prepAnalysis.needsSharpening ? 40 : 0,
-          contrast: prepAnalysis.needsContrast ? 25 : 0,
-          saturation: prepAnalysis.needsSaturation ? 30 : 0
-        };
-        applyImagePreprocessing(originalImageData, autoSettings);
-        prepSettings = autoSettings;
-        ctx.putImageData(originalImageData, 0, 0);
-      }
-
       updateImagePrepStatus();
       ensurePristineCanvas();
       brushUndoStack = [];
@@ -1380,12 +1368,12 @@ let currentDetailMode = 'bw';
 // value that actually looked right on that same file: clean, crisp, flat-vector shapes with no
 // speckle, at colorCount 8.
 const modeDetailState = {
-  bw: { simplify: 438, speckle: 3, smoothing: 0.9, rightAngle: true },
-  color: { simplify: 438, speckle: 3, smoothing: 5, rightAngle: true },
-  // Greyscale shares Color mode's starting defaults (same underlying pipeline, see runTrace) —
-  // its own bucket exists so tuning one doesn't silently drag the other's baseline around, same
-  // reasoning as splitting bw/color above.
-  greyscale: { simplify: 438, speckle: 3, smoothing: 5, rightAngle: true }
+  // Increased simplify (curve smoothing) to produce smooth curves instead of pixelated staircase
+  // Increased speckle removal to eliminate tiny fragments that create jagged edges
+  // Increased smoothing (edge smoothing/blur) for crisp but smooth boundaries
+  bw: { simplify: 1200, speckle: 8, smoothing: 2, rightAngle: true },
+  color: { simplify: 1200, speckle: 8, smoothing: 8, rightAngle: true },
+  greyscale: { simplify: 1200, speckle: 8, smoothing: 8, rightAngle: true }
 };
 function saveDetailState(modeKey){
   modeDetailState[modeKey] = {
@@ -3218,7 +3206,12 @@ function commitDeleteSelection(){
   colorOverridePanel.style.display = 'none';
 
   cancelDeleteSelection();
-  invalidateInFlightTrace();
+  // Don't invalidate the trace after delete — the preview SVG showing the deleted shapes removed
+  // is what the user has approved. Exporting should use that same SVG, not force a fresh trace
+  // on the modified pixels which would produce totally different paths (phantom re-trace bug).
+  // If they manually click "Re-vectorize Now", that will update it properly.
+  // invalidateInFlightTrace();
+  needsRetrace = false; // Mark that current SVG is valid for current pixel state
 }
 
 deleteScopeSelect.addEventListener('change', async () => {
