@@ -1368,12 +1368,10 @@ let currentDetailMode = 'bw';
 // value that actually looked right on that same file: clean, crisp, flat-vector shapes with no
 // speckle, at colorCount 8.
 const modeDetailState = {
-  // Increased simplify (curve smoothing) to produce smooth curves instead of pixelated staircase
-  // Increased speckle removal to eliminate tiny fragments that create jagged edges
-  // Increased smoothing (edge smoothing/blur) for crisp but smooth boundaries
-  bw: { simplify: 1200, speckle: 8, smoothing: 2, rightAngle: true },
-  color: { simplify: 1200, speckle: 8, smoothing: 8, rightAngle: true },
-  greyscale: { simplify: 1200, speckle: 8, smoothing: 8, rightAngle: true }
+  // Zero defaults produce best quality. Users adjust upward only if needed for specific images.
+  bw: { simplify: 0, speckle: 0, smoothing: 0, rightAngle: true },
+  color: { simplify: 0, speckle: 0, smoothing: 0, rightAngle: true },
+  greyscale: { simplify: 0, speckle: 0, smoothing: 0, rightAngle: true }
 };
 function saveDetailState(modeKey){
   modeDetailState[modeKey] = {
