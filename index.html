@@ -571,38 +571,6 @@
 
     <div class="tools">
       <div class="tool-block">
-        <h3><span class="n">00</span> Image Prep</h3>
-        <p class="hint">Auto-enhance source images before tracing. Sharpening and contrast boost help your vectorizer detect colors more accurately and trace crisp outlines.</p>
-        <button class="action ghost" id="suggestImagePrep" style="margin-bottom:12px;">✨ Suggest Image Prep (Auto-Detect)</button>
-        <div id="imagePrepStatus" style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:#000;font-weight:500;margin-bottom:12px;min-height:14px;"></div>
-        <button class="action ghost" id="toggleFineTune" style="margin-bottom:12px;">⚙ Fine-tune Preprocessing</button>
-        <div id="imagePrepControls" style="display:none;">
-          <div class="slider-row">
-            <div class="slider-col">
-              <label>Sharpness</label>
-              <input type="range" id="prepSharpness" min="0" max="100" value="0">
-            </div>
-            <input type="number" class="num-input" id="prepSharpnessNum" min="0" max="100" step="1" value="0">
-          </div>
-          <div class="slider-row">
-            <div class="slider-col">
-              <label>Contrast</label>
-              <input type="range" id="prepContrast" min="0" max="100" value="0">
-            </div>
-            <input type="number" class="num-input" id="prepContrastNum" min="0" max="100" step="1" value="0">
-          </div>
-          <div class="slider-row">
-            <div class="slider-col">
-              <label>Saturation</label>
-              <input type="range" id="prepSaturation" min="0" max="100" value="0">
-            </div>
-            <input type="number" class="num-input" id="prepSaturationNum" min="0" max="100" step="1" value="0">
-          </div>
-          <button class="action ghost" id="resetImagePrep" style="margin-top:10px;">Reset Image Prep to Defaults</button>
-        </div>
-      </div>
-
-      <div class="tool-block">
         <h3><span class="n">01</span> Trace mode</h3>
         <p class="hint">Line art / logos give the cleanest single-colour trace. Color mode posterizes photos into flat vector regions. Greyscale does the same but in tonal shades of grey, no hue.</p>
         <button class="action ghost" id="suggestSettings" style="margin-bottom:12px;">✨ Suggest Settings for This Image</button>
@@ -763,36 +731,7 @@
       </div>
 
       <div class="tool-block">
-        <h3><span class="n">03</span> Delete shapes</h3>
-        <p class="hint">Click a shape in the Vector preview to select it (and, at Tolerance scope, every similarly-colored shape near it), then click it again — or press Delete Selected — to remove it. Erases the underlying source pixels, so deletions survive re-tracing. Switches to Vector view automatically.</p>
-        <div class="row" style="margin-bottom:12px;">
-          <select id="deleteScope">
-            <option value="off">Off</option>
-            <option value="shape">Delete this shape only</option>
-            <option value="color">Delete every shape of this exact color</option>
-            <option value="tolerance">Delete similar shades (tolerance)</option>
-          </select>
-        </div>
-        <div id="deleteToleranceRow" style="display:none; margin-bottom:12px;">
-          <div class="slider-row">
-            <div class="slider-col">
-              <label>Color tolerance</label>
-              <input type="range" id="deleteTolerance" min="0" max="100" value="15">
-            </div>
-            <input type="number" class="num-input" id="deleteToleranceNum" min="0" max="100" step="1" value="15">
-          </div>
-        </div>
-        <div id="deleteSelectionActions" style="display:none; margin-bottom:12px;">
-          <div class="meta" style="margin-bottom:8px; justify-content:flex-start;"><span id="deleteSelectionSummary"></span></div>
-          <button class="action" id="deleteConfirm" style="margin-bottom:6px;">Delete Selected</button>
-          <button class="action ghost" id="deleteCancel">Cancel Selection</button>
-        </div>
-        <button class="action ghost" id="deleteUndoLast" style="margin-bottom:6px;">Undo Last Delete</button>
-        <button class="action ghost" id="deleteResetAll">Reset All Touch-ups</button>
-      </div>
-
-      <div class="tool-block">
-        <h3><span class="n">04</span> Touch-up brush</h3>
+        <h3><span class="n">03</span> Touch-up brush</h3>
         <p class="hint">Paints directly onto the source pixels (Source view), so edits get traced properly instead of sitting on top as a raster patch. Switches to Source view automatically.</p>
         <div class="row" style="margin-bottom:12px;">
           <select id="brushMode">
@@ -818,7 +757,7 @@
       </div>
 
       <div class="tool-block">
-        <h3><span class="n">05</span> Export</h3>
+        <h3><span class="n">04</span> Export</h3>
         <button class="action" id="downloadSvg" style="margin-bottom:8px;">Download SVG</button>
         <button class="action ghost" id="downloadPng">Download PNG Preview</button>
         <div id="traceStatus" style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:#000;font-weight:500;margin-top:8px;min-height:14px;"></div>
@@ -866,27 +805,12 @@ const speckleNum = document.getElementById('speckleNum');
 const rightAngle = document.getElementById('rightAngle');
 const supersample = document.getElementById('supersample');
 
-const prepSharpness = document.getElementById('prepSharpness');
-const prepSharpnessNum = document.getElementById('prepSharpnessNum');
-const prepContrast = document.getElementById('prepContrast');
-const prepContrastNum = document.getElementById('prepContrastNum');
-const prepSaturation = document.getElementById('prepSaturation');
-const prepSaturationNum = document.getElementById('prepSaturationNum');
-const imagePrepStatus = document.getElementById('imagePrepStatus');
-const imagePrepControls = document.getElementById('imagePrepControls');
-const suggestImagePrepBtn = document.getElementById('suggestImagePrep');
-const toggleFineTuneBtn = document.getElementById('toggleFineTune');
-const resetImagePrepBtn = document.getElementById('resetImagePrep');
-
 const viewSourceBtn = document.getElementById('viewSource');
 const viewVectorBtn = document.getElementById('viewVector');
 
 let originalImageData = null; // pristine pixels straight from the loaded image — every trace re-runs from this, never from a previous trace's output
 let lastSvgString = '';
 let lastPalette = []; // Color mode's current palette — indices here are what colorOverrides keys into
-// Image preprocessing state
-let prepAnalysis = { needsSharpening: false, needsContrast: false, needsSaturation: false };
-let prepSettings = { sharpness: 0, contrast: 0, saturation: 0 };
 // Set by "Delete this color" — an exact palette (same RGB values, no re-clustering) to use
 // instead of a fresh kMeansPalette call. Cleared (falls back to fresh detection) whenever
 // colorCount no longer matches its length — see runTrace's color branch.
@@ -944,6 +868,7 @@ let colorCountAutoPendingByMode = { color: true, greyscale: true };
 // 0.02-20 for a busier real-world graphic that needed more headroom on all the Detail controls.
 // Slider steps scale up proportionally so per-notch sensitivity stays the same as before.
 function simplifyToTres(sliderVal){
+  if (sliderVal === 0) return 0;
   return 0.02 + (sliderVal / 8000) * 39.98;
 }
 function tresToSimplify(tres){
@@ -1034,166 +959,6 @@ canvasPanel.addEventListener('wheel', e => {
   applyZoom(zoomPct * factor, e.clientX, e.clientY);
 }, { passive: false });
 
-// Analyze image to detect if preprocessing would help
-function detectPrepNeeds(imgData){
-  const { data, width, height } = imgData;
-  let totalR = 0, totalG = 0, totalB = 0, totalL = 0, count = 0;
-  const edgePixels = [];
-
-  for (let i = 0; i < data.length; i += 4){
-    if (data[i + 3] < 10) continue;
-    totalR += data[i];
-    totalG += data[i + 1];
-    totalB += data[i + 2];
-    const lum = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
-    totalL += lum;
-    count++;
-  }
-
-  if (count === 0) return { needsSharpening: false, needsContrast: false, needsSaturation: false };
-
-  const avgL = totalL / count;
-  const avgR = totalR / count;
-  const avgG = totalG / count;
-  const avgB = totalB / count;
-
-  // Detect low contrast (flat colors, small range)
-  let minL = 255, maxL = 0, colorRange = 0;
-  for (let i = 0; i < data.length; i += 4){
-    if (data[i + 3] < 10) continue;
-    const lum = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
-    minL = Math.min(minL, lum);
-    maxL = Math.max(maxL, lum);
-    const dr = data[i] - avgR, dg = data[i + 1] - avgG, db = data[i + 2] - avgB;
-    colorRange += Math.sqrt(dr*dr + dg*dg + db*db);
-  }
-  colorRange /= count;
-  const contrastRatio = (maxL - minL) / 255;
-  const saturation = Math.sqrt(colorRange) / 128;
-
-  return {
-    needsSharpening: contrastRatio < 0.4,
-    needsContrast: contrastRatio < 0.5,
-    needsSaturation: saturation < 0.3
-  };
-}
-
-// Unsharp mask sharpening
-function sharpenImageData(imgData, amount){
-  if (amount <= 0) return;
-  const { data, width, height } = imgData;
-  const blurred = new Uint8ClampedArray(data);
-
-  // Simple box blur for unsharp mask
-  const radius = 1;
-  for (let y = radius; y < height - radius; y++){
-    for (let x = radius; x < width - radius; x++){
-      let sumR = 0, sumG = 0, sumB = 0, cnt = 0;
-      for (let dy = -radius; dy <= radius; dy++){
-        for (let dx = -radius; dx <= radius; dx++){
-          const idx = ((y + dy) * width + (x + dx)) * 4;
-          sumR += blurred[idx];
-          sumG += blurred[idx + 1];
-          sumB += blurred[idx + 2];
-          cnt++;
-        }
-      }
-      const idx = (y * width + x) * 4;
-      const origR = data[idx], origG = data[idx + 1], origB = data[idx + 2];
-      const blurR = Math.round(sumR / cnt);
-      const blurG = Math.round(sumG / cnt);
-      const blurB = Math.round(sumB / cnt);
-
-      const factor = amount / 100 * 0.8;
-      data[idx] = Math.max(0, Math.min(255, origR + (origR - blurR) * factor));
-      data[idx + 1] = Math.max(0, Math.min(255, origG + (origG - blurG) * factor));
-      data[idx + 2] = Math.max(0, Math.min(255, origB + (origB - blurB) * factor));
-    }
-  }
-}
-
-// Adjust contrast
-function adjustImageContrast(imgData, amount){
-  if (amount <= 0) return;
-  const { data } = imgData;
-  const factor = 1 + amount / 100 * 0.6;
-  const mid = 128;
-
-  for (let i = 0; i < data.length; i += 4){
-    if (data[i + 3] < 10) continue;
-    data[i] = Math.max(0, Math.min(255, mid + (data[i] - mid) * factor));
-    data[i + 1] = Math.max(0, Math.min(255, mid + (data[i + 1] - mid) * factor));
-    data[i + 2] = Math.max(0, Math.min(255, mid + (data[i + 2] - mid) * factor));
-  }
-}
-
-// Adjust saturation using HSL
-function adjustImageSaturation(imgData, amount){
-  if (amount <= 0) return;
-  const { data } = imgData;
-  const factor = 1 + amount / 100 * 0.5;
-
-  for (let i = 0; i < data.length; i += 4){
-    if (data[i + 3] < 10) continue;
-    const r = data[i] / 255, g = data[i + 1] / 255, b = data[i + 2] / 255;
-    const max = Math.max(r, g, b), min = Math.min(r, g, b);
-    const l = (max + min) / 2;
-    let h, s;
-
-    if (max === min){ h = s = 0; }
-    else {
-      const d = max - min;
-      s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
-      s = Math.min(1, s * factor);
-      switch (max){
-        case r: h = (g - b) / d + (g < b ? 6 : 0); break;
-        case g: h = (b - r) / d + 2; break;
-        default: h = (r - g) / d + 4;
-      }
-      h /= 6;
-    }
-
-    const hue2rgb = (p, q, t) => {
-      if (t < 0) t += 1; if (t > 1) t -= 1;
-      if (t < 1/6) return p + (q - p) * 6 * t;
-      if (t < 1/2) return q;
-      if (t < 2/3) return p + (q - p) * (2/3 - t) * 6;
-      return p;
-    };
-    const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
-    const p = 2 * l - q;
-    data[i] = Math.round(hue2rgb(p, q, h + 1/3) * 255);
-    data[i + 1] = Math.round(hue2rgb(p, q, h) * 255);
-    data[i + 2] = Math.round(hue2rgb(p, q, h - 1/3) * 255);
-  }
-}
-
-// Apply all preprocessing
-function applyImagePreprocessing(imgData, settings){
-  if (!imgData) return;
-  sharpenImageData(imgData, settings.sharpness);
-  adjustImageContrast(imgData, settings.contrast);
-  adjustImageSaturation(imgData, settings.saturation);
-}
-
-// Update the status display
-function updateImagePrepStatus(){
-  const { sharpness, contrast, saturation } = prepSettings;
-  const applied = sharpness > 0 || contrast > 0 || saturation > 0;
-
-  if (!applied){
-    imagePrepStatus.textContent = prepAnalysis.needsSharpening || prepAnalysis.needsContrast || prepAnalysis.needsSaturation
-      ? '→ Ready to enhance (click "Suggest Image Prep" to auto-apply)'
-      : '✓ Image looks good as-is';
-  } else {
-    const parts = [];
-    if (sharpness > 0) parts.push(`Sharpness +${sharpness}`);
-    if (contrast > 0) parts.push(`Contrast +${contrast}`);
-    if (saturation > 0) parts.push(`Saturation +${saturation}`);
-    imagePrepStatus.textContent = '✓ Applied: ' + parts.join(' • ');
-  }
-}
-
 function loadImageFile(file){
   const img = new Image();
   const reader = new FileReader();
@@ -1208,11 +973,6 @@ function loadImageFile(file){
       // never mutated afterward, unlike originalImageData which the brush paints into directly.
       pristineImageData = new ImageData(new Uint8ClampedArray(originalImageData.data), originalImageData.width, originalImageData.height);
 
-      // Analyze image but DON'T auto-apply preprocessing — it was causing pixelated edges
-      // Users can manually adjust via the Image Prep sliders if needed
-      prepAnalysis = detectPrepNeeds(originalImageData);
-      prepSettings = { sharpness: 0, contrast: 0, saturation: 0 };
-      updateImagePrepStatus();
       ensurePristineCanvas();
       brushUndoStack = [];
       // A new image gets a fresh palette with different colors in a different order — any
@@ -1269,67 +1029,6 @@ document.getElementById('reset').addEventListener('click', () => {
   paletteBlock.style.display = 'none';
 });
 
-// Image preprocessing controls
-bindSliderNumberPair(prepSharpness, prepSharpnessNum, v => Math.round(v), v => v);
-bindSliderNumberPair(prepContrast, prepContrastNum, v => Math.round(v), v => v);
-bindSliderNumberPair(prepSaturation, prepSaturationNum, v => Math.round(v), v => v);
-
-function applyPrepSettings(){
-  if (!originalImageData) return;
-  // Restore from pristine
-  const newSettings = { sharpness: parseInt(prepSharpness.value), contrast: parseInt(prepContrast.value), saturation: parseInt(prepSaturation.value) };
-  originalImageData.data.set(pristineImageData.data);
-  applyImagePreprocessing(originalImageData, newSettings);
-  prepSettings = newSettings;
-  ctx.putImageData(originalImageData, 0, 0);
-  updateImagePrepStatus();
-  scheduleTrace();
-}
-
-[prepSharpness, prepContrast, prepSaturation].forEach(el => {
-  el.addEventListener('input', applyPrepSettings);
-});
-
-suggestImagePrepBtn.addEventListener('click', () => {
-  if (!originalImageData) return;
-  // Reset sliders and reapply auto-detect
-  originalImageData.data.set(pristineImageData.data);
-  prepAnalysis = detectPrepNeeds(originalImageData);
-  const autoSettings = {
-    sharpness: prepAnalysis.needsSharpening ? 40 : 0,
-    contrast: prepAnalysis.needsContrast ? 25 : 0,
-    saturation: prepAnalysis.needsSaturation ? 30 : 0
-  };
-  applyImagePreprocessing(originalImageData, autoSettings);
-  prepSettings = autoSettings;
-  prepSharpness.value = autoSettings.sharpness;
-  prepSharpnessNum.value = autoSettings.sharpness;
-  prepContrast.value = autoSettings.contrast;
-  prepContrastNum.value = autoSettings.contrast;
-  prepSaturation.value = autoSettings.saturation;
-  prepSaturationNum.value = autoSettings.saturation;
-  ctx.putImageData(originalImageData, 0, 0);
-  updateImagePrepStatus();
-  scheduleTrace();
-});
-
-toggleFineTuneBtn.addEventListener('click', () => {
-  imagePrepControls.style.display = imagePrepControls.style.display === 'none' ? 'block' : 'none';
-});
-
-resetImagePrepBtn.addEventListener('click', () => {
-  originalImageData.data.set(pristineImageData.data);
-  prepSettings = { sharpness: 0, contrast: 0, saturation: 0 };
-  prepSharpness.value = 0;
-  prepSharpnessNum.value = 0;
-  prepContrast.value = 0;
-  prepContrastNum.value = 0;
-  prepSaturation.value = 0;
-  prepSaturationNum.value = 0;
-  ctx.putImageData(originalImageData, 0, 0);
-  updateImagePrepStatus();
-  scheduleTrace();
-});
 
 const paletteBlockTitle = document.getElementById('paletteBlockTitle');
 const colorCountLabel = document.getElementById('colorCountLabel');
