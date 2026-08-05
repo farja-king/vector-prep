@@ -999,6 +999,7 @@ let panStartScrollTop = 0;
 
 document.addEventListener('keydown', e => {
   if (e.code === 'Space' && !spacePressed) {
+    e.preventDefault();
     spacePressed = true;
     canvas.classList.add('pan-active');
     svgHolder.classList.add('pan-active');
@@ -1008,6 +1009,7 @@ document.addEventListener('keydown', e => {
 
 document.addEventListener('keyup', e => {
   if (e.code === 'Space') {
+    e.preventDefault();
     spacePressed = false;
     canvas.classList.remove('pan-active');
     svgHolder.classList.remove('pan-active');
