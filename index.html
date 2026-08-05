@@ -379,9 +379,13 @@
 
   canvas{display:block; margin:auto; flex-shrink:0;}
   canvas.brush-active{cursor:crosshair;}
+  canvas.pan-active{cursor:grab;}
+  canvas.pan-active:active{cursor:grabbing;}
   #svgHolder{display:none; margin:auto; flex-shrink:0;}
   #svgHolder svg{display:block;}
   #svgHolder.delete-active path{cursor:pointer;}
+  #svgHolder.pan-active{cursor:grab;}
+  #svgHolder.pan-active:active{cursor:grabbing;}
   #svgHolder.delete-active path:hover{opacity:.55; outline:1px dashed var(--thread-red); outline-offset:1px;}
   #svgHolder.delete-active path.delete-selected{opacity:.4; outline:2px solid var(--thread-red); outline-offset:1px;}
 
@@ -571,7 +575,7 @@
 
     <div class="tools">
       <div class="tool-block">
-        <h3><span class="n">01</span> Trace mode</h3>
+        <h3><span class="n">00</span> Trace mode</h3>
         <p class="hint">Line art / logos give the cleanest single-colour trace. Color mode posterizes photos into flat vector regions. Greyscale does the same but in tonal shades of grey, no hue.</p>
         <button class="action ghost" id="suggestSettings" style="margin-bottom:12px;">✨ Suggest Settings for This Image</button>
         <div class="row" style="margin-bottom:12px;">
@@ -682,7 +686,7 @@
       </div>
 
       <div class="tool-block">
-        <h3><span class="n">02</span> Detail</h3>
+        <h3><span class="n">01</span> Detail</h3>
         <p class="hint">Images are automatically supersampled before tracing for smoother, more accurate curves — these controls fine-tune fidelity on top of that.</p>
         <div class="row" style="margin-bottom:12px;">
           <select id="supersample">
@@ -702,25 +706,25 @@
         <div class="slider-row">
           <div class="slider-col">
             <label>Curve smoothing (higher = smoother; very low values trace the raw pixel staircase instead of fitting a curve)</label>
-            <input type="range" id="simplify" min="0" max="8000" value="0">
+            <input type="range" id="simplify" min="0" max="8000" value="438">
           </div>
-          <input type="number" class="num-input" id="simplifyNum" min="0.02" max="40" step="0.01" value="0.02">
+          <input type="number" class="num-input" id="simplifyNum" min="0.02" max="40" step="0.01" value="2.21">
         </div>
 
         <div class="slider-row">
           <div class="slider-col">
             <label>Speckle removal</label>
-            <input type="range" id="speckle" min="0" max="200" value="0">
+            <input type="range" id="speckle" min="0" max="200" value="3">
           </div>
-          <input type="number" class="num-input" id="speckleNum" min="0" max="200" step="1" value="0">
+          <input type="number" class="num-input" id="speckleNum" min="0" max="200" step="1" value="3">
         </div>
 
         <div class="slider-row">
           <div class="slider-col">
             <label>Edge smoothing / blur (a blunter, coarser tool than Curve smoothing above — push that one up first for jagged edges)</label>
-            <input type="range" id="smoothing" min="0" max="40" step="0.1" value="0">
+            <input type="range" id="smoothing" min="0" max="40" step="0.1" value="0.9">
           </div>
-          <input type="number" class="num-input" id="smoothingNum" min="0" max="40" step="0.1" value="0">
+          <input type="number" class="num-input" id="smoothingNum" min="0" max="40" step="0.1" value="0.9">
         </div>
 
         <label style="font-size:11px; color:#000;font-weight:500; display:block; margin-top:4px;">
@@ -728,6 +732,35 @@
         </label>
 
         <button class="action ghost" id="resetDetail" style="margin-top:10px;">Reset Detail to Defaults</button>
+      </div>
+
+      <div class="tool-block">
+        <h3><span class="n">02</span> Delete shapes</h3>
+        <p class="hint">Click a shape in the Vector preview to select it (and, at Tolerance scope, every similarly-colored shape near it), then click it again — or press Delete Selected — to remove it. Erases the underlying source pixels, so deletions survive re-tracing. Switches to Vector view automatically.</p>
+        <div class="row" style="margin-bottom:12px;">
+          <select id="deleteScope">
+            <option value="off">Off</option>
+            <option value="shape">Delete this shape only</option>
+            <option value="color">Delete every shape of this exact color</option>
+            <option value="tolerance">Delete similar shades (tolerance)</option>
+          </select>
+        </div>
+        <div id="deleteToleranceRow" style="display:none; margin-bottom:12px;">
+          <div class="slider-row">
+            <div class="slider-col">
+              <label>Color tolerance</label>
+              <input type="range" id="deleteTolerance" min="0" max="100" value="15">
+            </div>
+            <input type="number" class="num-input" id="deleteToleranceNum" min="0" max="100" step="1" value="15">
+          </div>
+        </div>
+        <div id="deleteSelectionActions" style="display:none; margin-bottom:12px;">
+          <div class="meta" style="margin-bottom:8px; justify-content:flex-start;"><span id="deleteSelectionSummary"></span></div>
+          <button class="action" id="deleteConfirm" style="margin-bottom:6px;">Delete Selected</button>
+          <button class="action ghost" id="deleteCancel">Cancel Selection</button>
+        </div>
+        <button class="action ghost" id="deleteUndoLast" style="margin-bottom:6px;">Undo Last Delete</button>
+        <button class="action ghost" id="deleteResetAll">Reset All Touch-ups</button>
       </div>
 
       <div class="tool-block">
@@ -868,7 +901,6 @@ let colorCountAutoPendingByMode = { color: true, greyscale: true };
 // 0.02-20 for a busier real-world graphic that needed more headroom on all the Detail controls.
 // Slider steps scale up proportionally so per-notch sensitivity stays the same as before.
 function simplifyToTres(sliderVal){
-  if (sliderVal === 0) return 0;
   return 0.02 + (sliderVal / 8000) * 39.98;
 }
 function tresToSimplify(tres){
@@ -959,6 +991,56 @@ canvasPanel.addEventListener('wheel', e => {
   applyZoom(zoomPct * factor, e.clientX, e.clientY);
 }, { passive: false });
 
+let spacePressed = false;
+let panStartX = 0;
+let panStartY = 0;
+let panStartScrollLeft = 0;
+let panStartScrollTop = 0;
+
+document.addEventListener('keydown', e => {
+  if (e.code === 'Space' && !spacePressed) {
+    spacePressed = true;
+    canvas.classList.add('pan-active');
+    svgHolder.classList.add('pan-active');
+    previewHolder.style.cursor = 'grab';
+  }
+});
+
+document.addEventListener('keyup', e => {
+  if (e.code === 'Space') {
+    spacePressed = false;
+    canvas.classList.remove('pan-active');
+    svgHolder.classList.remove('pan-active');
+    previewHolder.style.cursor = '';
+  }
+});
+
+previewHolder.addEventListener('mousedown', e => {
+  if (!spacePressed) return;
+  e.preventDefault();
+  panStartX = e.clientX;
+  panStartY = e.clientY;
+  panStartScrollLeft = previewHolder.scrollLeft;
+  panStartScrollTop = previewHolder.scrollTop;
+  previewHolder.style.cursor = 'grabbing';
+});
+
+previewHolder.addEventListener('mousemove', e => {
+  if (!spacePressed || (panStartX === 0 && panStartY === 0)) return;
+  const deltaX = e.clientX - panStartX;
+  const deltaY = e.clientY - panStartY;
+  previewHolder.scrollLeft = panStartScrollLeft - deltaX;
+  previewHolder.scrollTop = panStartScrollTop - deltaY;
+});
+
+document.addEventListener('mouseup', e => {
+  panStartX = 0;
+  panStartY = 0;
+  if (spacePressed) {
+    previewHolder.style.cursor = 'grab';
+  }
+});
+
 function loadImageFile(file){
   const img = new Image();
   const reader = new FileReader();
@@ -972,7 +1054,6 @@ function loadImageFile(file){
       // Untouched backup for the Restore brush and "Reset All Touch-ups" — captured once here,
       // never mutated afterward, unlike originalImageData which the brush paints into directly.
       pristineImageData = new ImageData(new Uint8ClampedArray(originalImageData.data), originalImageData.width, originalImageData.height);
-
       ensurePristineCanvas();
       brushUndoStack = [];
       // A new image gets a fresh palette with different colors in a different order — any
@@ -1027,7 +1108,6 @@ document.getElementById('reset').addEventListener('click', () => {
   paletteBlock.style.display = 'none';
 });
 
-
 const paletteBlockTitle = document.getElementById('paletteBlockTitle');
 const colorCountLabel = document.getElementById('colorCountLabel');
 modeSelect.addEventListener('change', () => {
@@ -1065,10 +1145,12 @@ let currentDetailMode = 'bw';
 // value that actually looked right on that same file: clean, crisp, flat-vector shapes with no
 // speckle, at colorCount 8.
 const modeDetailState = {
-  // Zero defaults produce best quality. Users adjust upward only if needed for specific images.
-  bw: { simplify: 0, speckle: 0, smoothing: 0, rightAngle: true },
-  color: { simplify: 0, speckle: 0, smoothing: 0, rightAngle: true },
-  greyscale: { simplify: 0, speckle: 0, smoothing: 0, rightAngle: true }
+  bw: { simplify: 438, speckle: 3, smoothing: 0.9, rightAngle: true },
+  color: { simplify: 438, speckle: 3, smoothing: 5, rightAngle: true },
+  // Greyscale shares Color mode's starting defaults (same underlying pipeline, see runTrace) —
+  // its own bucket exists so tuning one doesn't silently drag the other's baseline around, same
+  // reasoning as splitting bw/color above.
+  greyscale: { simplify: 438, speckle: 3, smoothing: 5, rightAngle: true }
 };
 function saveDetailState(modeKey){
   modeDetailState[modeKey] = {
@@ -2367,18 +2449,7 @@ function runTrace(){
             const re = new RegExp(`<path[^>]*fill="rgb\\(${color.r},\\s*${color.g},\\s*${color.b}\\)"[^>]*\\/?>`, 'g');
             groupPaths.push(...(groupSvg.match(re) || []));
           });
-          // Flatten paths with transform baked into each path element (ungrouped)
-          if (groupPaths.length) {
-            groupPaths.forEach(pathStr => {
-              // If there's a translate offset, add it as a transform attribute on the individual path
-              if (bx0 !== 0 || by0 !== 0) {
-                const withTransform = pathStr.replace(/\/>$/, ` transform="translate(${bx0},${by0})"/>`).replace(/<\/path>$/, ` transform="translate(${bx0},${by0})"></path>`);
-                mergedPaths.push(withTransform);
-              } else {
-                mergedPaths.push(pathStr);
-              }
-            });
-          }
+          if (groupPaths.length) mergedPaths.push(`<g transform="translate(${bx0},${by0})">${groupPaths.join('')}</g>`);
         }
         svgString = `<svg viewBox="0 0 ${workingData.width} ${workingData.height}" version="1.1" xmlns="http://www.w3.org/2000/svg">${mergedPaths.join('')}</svg>`;
         renderPalette(palette);
@@ -2875,13 +2946,18 @@ function commitDeleteSelection(){
   }
   ctx.putImageData(originalImageData, 0, 0); // keep the raster canvas in sync with originalImageData, like the freehand brush does
 
-  // DON'T re-arm the color-count auto-detect after a delete. The user has already approved the
-  // current color count by accepting the preview — re-detecting on export would produce a
-  // different trace (different colors/paths) than what they saw, which is the "phantom re-trace
-  // bug" where export looks totally different from preview. The pixel modification alone doesn't
-  // require re-detection; the next manual Vectorize will pick up the change if needed.
-  // Keeping this commented as context in case re-clustering becomes necessary for some reason.
-  // colorCountAutoPendingByMode = { color: true, greyscale: true };
+  // Deleting a whole color's shapes changes the TRUE number of distinct colors left in the
+  // image, but Color count itself doesn't know that and stays at whatever it was — confirmed
+  // directly (real reference logo): deleting a 5th real color while colorCount stayed at 5 forced
+  // kMeansPalette to invent a spurious near-duplicate cluster to fill the now-unneeded slot
+  // (e.g. two orange shades one shade apart), and the classifier flickered between them pixel by
+  // pixel across what should have been one solid region — exploding a clean 32-path trace into
+  // 271 fragmented paths. Re-arming the same one-shot auto-detect used on fresh image loads lets
+  // the very next trace correct colorCount back down (see runTrace's color/greyscale branch)
+  // instead of leaving it stale. Both modes' flags are re-armed since a delete's pixel-level
+  // change affects the true count in either color space; harmless to set even in B&W mode or when
+  // nothing needs correcting — same no-op-if-already-right guard as the fresh-load case.
+  colorCountAutoPendingByMode = { color: true, greyscale: true };
 
   // REAL BUG, confirmed by direct scripted repro against the real reference file (IMG_2685.PNG):
   // colorOverrides is keyed by PALETTE INDEX (paletteIndex -> {curveFit, edgeSmoothing, speckle,
@@ -2901,11 +2977,7 @@ function commitDeleteSelection(){
   colorOverridePanel.style.display = 'none';
 
   cancelDeleteSelection();
-  // Force ONE re-trace to update lastSvgString with deleted shapes removed. Since we commented out
-  // the re-arm of colorCountAutoPendingByMode, this trace uses the same settings as the preview
-  // (same color count, same Detail settings) — so it produces the same result but with lastSvgString
-  // updated to match the DOM. Export then uses the fresh lastSvgString without pixelation re-trace bug.
-  scheduleTrace();
+  invalidateInFlightTrace();
 }
 
 deleteScopeSelect.addEventListener('change', async () => {
