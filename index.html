@@ -710,25 +710,25 @@
         <div class="slider-row">
           <div class="slider-col">
             <label>Curve smoothing (higher = smoother; very low values trace the raw pixel staircase instead of fitting a curve)</label>
-            <input type="range" id="simplify" min="0" max="8000" value="438">
+            <input type="range" id="simplify" min="0" max="8000" value="0">
           </div>
-          <input type="number" class="num-input" id="simplifyNum" min="0.02" max="40" step="0.01" value="2.21">
+          <input type="number" class="num-input" id="simplifyNum" min="0.02" max="40" step="0.01" value="0.02">
         </div>
 
         <div class="slider-row">
           <div class="slider-col">
             <label>Speckle removal</label>
-            <input type="range" id="speckle" min="0" max="200" value="3">
+            <input type="range" id="speckle" min="0" max="200" value="0">
           </div>
-          <input type="number" class="num-input" id="speckleNum" min="0" max="200" step="1" value="3">
+          <input type="number" class="num-input" id="speckleNum" min="0" max="200" step="1" value="0">
         </div>
 
         <div class="slider-row">
           <div class="slider-col">
             <label>Edge smoothing / blur (a blunter, coarser tool than Curve smoothing above — push that one up first for jagged edges)</label>
-            <input type="range" id="smoothing" min="0" max="40" step="0.1" value="0.9">
+            <input type="range" id="smoothing" min="0" max="40" step="0.1" value="0">
           </div>
-          <input type="number" class="num-input" id="smoothingNum" min="0" max="40" step="0.1" value="0.9">
+          <input type="number" class="num-input" id="smoothingNum" min="0" max="40" step="0.1" value="0">
         </div>
 
         <label style="font-size:11px; color:#000;font-weight:500; display:block; margin-top:4px;">
@@ -738,7 +738,11 @@
         <button class="action ghost" id="resetDetail" style="margin-top:10px;">Reset Detail to Defaults</button>
       </div>
 
-      <div class="tool-block">
+      <div class="tool-block" style="display:none;">
+        <!-- Hidden per Martin's request (2026-08-18) — caused trouble with the export and works
+             better without it. Left fully in place (markup, IDs, event listeners, JS functions
+             all untouched) in case it's wanted back later: just remove this display:none / restore
+             the "0N" numbering below to re-enable it. -->
         <h3><span class="n">02</span> Delete shapes</h3>
         <p class="hint">Click a shape in the Vector preview to select it (and, at Tolerance scope, every similarly-colored shape near it), then click it again — or press Delete Selected — to remove it. Erases the underlying source pixels, so deletions survive re-tracing. Switches to Vector view automatically.</p>
         <div class="row" style="margin-bottom:12px;">
@@ -768,7 +772,7 @@
       </div>
 
       <div class="tool-block">
-        <h3><span class="n">03</span> Touch-up brush</h3>
+        <h3><span class="n">02</span> Touch-up brush</h3>
         <p class="hint">Paints directly onto the source pixels (Source view), so edits get traced properly instead of sitting on top as a raster patch. Switches to Source view automatically.</p>
         <div class="row" style="margin-bottom:12px;">
           <select id="brushMode">
@@ -794,7 +798,7 @@
       </div>
 
       <div class="tool-block">
-        <h3><span class="n">04</span> Export</h3>
+        <h3><span class="n">03</span> Export</h3>
         <button class="action" id="downloadSvg" style="margin-bottom:8px;">Download SVG</button>
         <button class="action ghost" id="downloadPng">Download PNG Preview</button>
         <div id="traceStatus" style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:#000;font-weight:500;margin-top:8px;min-height:14px;"></div>
@@ -1181,12 +1185,12 @@ let currentDetailMode = 'bw';
 // value that actually looked right on that same file: clean, crisp, flat-vector shapes with no
 // speckle, at colorCount 8.
 const modeDetailState = {
-  bw: { simplify: 438, speckle: 3, smoothing: 0.9, rightAngle: true },
-  color: { simplify: 438, speckle: 3, smoothing: 5, rightAngle: true },
+  bw: { simplify: 0, speckle: 0, smoothing: 0, rightAngle: true },
+  color: { simplify: 0, speckle: 0, smoothing: 0, rightAngle: true },
   // Greyscale shares Color mode's starting defaults (same underlying pipeline, see runTrace) —
   // its own bucket exists so tuning one doesn't silently drag the other's baseline around, same
   // reasoning as splitting bw/color above.
-  greyscale: { simplify: 438, speckle: 3, smoothing: 5, rightAngle: true }
+  greyscale: { simplify: 0, speckle: 0, smoothing: 0, rightAngle: true }
 };
 function saveDetailState(modeKey){
   modeDetailState[modeKey] = {
@@ -1374,9 +1378,9 @@ document.getElementById('resetColorCount').addEventListener('click', () => {
 });
 
 const DETAIL_DEFAULTS = {
-  bw: { simplifySlider: 438, speckle: 3, smoothing: 0.9, rightAngle: true },
-  color: { simplifySlider: 438, speckle: 3, smoothing: 5, rightAngle: true },
-  greyscale: { simplifySlider: 438, speckle: 3, smoothing: 5, rightAngle: true }
+  bw: { simplifySlider: 0, speckle: 0, smoothing: 0, rightAngle: true },
+  color: { simplifySlider: 0, speckle: 0, smoothing: 0, rightAngle: true },
+  greyscale: { simplifySlider: 0, speckle: 0, smoothing: 0, rightAngle: true }
 };
 document.getElementById('resetDetail').addEventListener('click', () => {
   const d = DETAIL_DEFAULTS[currentDetailMode];
@@ -2485,7 +2489,16 @@ function runTrace(){
             const re = new RegExp(`<path[^>]*fill="rgb\\(${color.r},\\s*${color.g},\\s*${color.b}\\)"[^>]*\\/?>`, 'g');
             groupPaths.push(...(groupSvg.match(re) || []));
           });
-          if (groupPaths.length) mergedPaths.push(`<g transform="translate(${bx0},${by0})">${groupPaths.join('')}</g>`);
+          // Each path gets its own transform attribute instead of a shared <g> wrapper — same crop
+          // offset (this group was traced on a cropped sub-image, see bx0/by0 above), but every path
+          // lands in the exported SVG as its own independent top-level element. A <g> import as one
+          // locked/grouped object in Illustrator, Cricut Design Space etc. that needs ungrouping
+          // before individual shapes can be selected; this skips that step entirely. getPathOffset()
+          // (used by delete-shapes below) reads this same per-path transform to recover the offset.
+          if (bx0 !== 0 || by0 !== 0) {
+            groupPaths = groupPaths.map(p => p.replace(/^<path/, `<path transform="translate(${bx0},${by0})"`));
+          }
+          mergedPaths.push(...groupPaths);
         }
         svgString = `<svg viewBox="0 0 ${workingData.width} ${workingData.height}" version="1.1" xmlns="http://www.w3.org/2000/svg">${mergedPaths.join('')}</svg>`;
         renderPalette(palette);
@@ -2809,17 +2822,27 @@ function getViewBoxScale(svgEl){
   const vbWidth = vb[2] || (originalImageData ? originalImageData.width : 1);
   return (originalImageData ? originalImageData.width : vbWidth) / vbWidth;
 }
-// A path's center in native image-pixel space, accounting for its group's crop-offset transform
-// (Color mode wraps same-settings color groups in <g transform="translate(bx0,by0)">; B&W paths
-// have no such wrapper) — same offset-recovery approach as commitDeleteSelection's erase mask.
-function getPathNativeCenter(pathEl, scale){
-  const bbox = pathEl.getBBox();
+// A path's crop-offset translate, wherever it's carried. Color/Greyscale traces put a
+// transform="translate(bx0,by0)" directly on each <path> (see runTrace's color branch — every
+// shape exports as its own independent element instead of being wrapped in a <g>); B&W paths have
+// no offset at all. Falls back to a wrapping <g transform="..."> for anything traced before that
+// change. Shared by getPathNativeCenter (delete-shapes matching) and commitDeleteSelection (the
+// erase mask), which both need this same offset recovered from the live DOM.
+function getPathOffset(pathEl){
+  const own = /translate\(([-\d.]+)[,\s]+([-\d.]+)\)/.exec(pathEl.getAttribute('transform') || '');
+  if (own) return { tx: parseFloat(own[1]), ty: parseFloat(own[2]) };
   const g = pathEl.closest('g[transform]');
-  let tx = 0, ty = 0;
   if (g) {
     const m = /translate\(([-\d.]+)[,\s]+([-\d.]+)\)/.exec(g.getAttribute('transform') || '');
-    if (m) { tx = parseFloat(m[1]); ty = parseFloat(m[2]); }
+    if (m) return { tx: parseFloat(m[1]), ty: parseFloat(m[2]) };
   }
+  return { tx: 0, ty: 0 };
+}
+// A path's center in native image-pixel space, accounting for its crop-offset transform (see
+// getPathOffset).
+function getPathNativeCenter(pathEl, scale){
+  const bbox = pathEl.getBBox();
+  const { tx, ty } = getPathOffset(pathEl);
   return { x: (bbox.x + bbox.width / 2 + tx) * scale, y: (bbox.y + bbox.height / 2 + ty) * scale };
 }
 // Tolerance's spatial reach: at slider 0, radius is 0 (moot — see the force-include-anchor logic
@@ -2909,23 +2932,16 @@ function commitDeleteSelection(){
   const scale = originalImageData.width / vbWidth;
 
   // Rasterize the target path(s) at native image resolution to get an erase mask. Each path's `d`
-  // is in its own local coordinate space — Color mode wraps same-settings color groups in a
-  // <g transform="translate(bx0,by0)"> (the group's cropped bounding-box offset, see runTrace's
-  // color branch); B&W paths have no such wrapper. Re-deriving that offset from the live DOM
-  // (rather than trusting anything cached) guarantees the mask lands on the exact pixels the
-  // visible shape actually occupies.
+  // is in its own local coordinate space — see getPathOffset for where the crop offset lives.
+  // Re-deriving it from the live DOM (rather than trusting anything cached) guarantees the mask
+  // lands on the exact pixels the visible shape actually occupies.
   const maskCanvas = document.createElement('canvas');
   maskCanvas.width = originalImageData.width;
   maskCanvas.height = originalImageData.height;
   const mctx = maskCanvas.getContext('2d');
   mctx.setTransform(scale, 0, 0, scale, 0, 0);
   targets.forEach(p => {
-    const g = p.closest('g[transform]');
-    let tx = 0, ty = 0;
-    if (g) {
-      const m = /translate\(([-\d.]+)[,\s]+([-\d.]+)\)/.exec(g.getAttribute('transform') || '');
-      if (m) { tx = parseFloat(m[1]); ty = parseFloat(m[2]); }
-    }
+    const { tx, ty } = getPathOffset(p);
     mctx.save();
     mctx.translate(tx, ty);
     mctx.fill(new Path2D(p.getAttribute('d')));
