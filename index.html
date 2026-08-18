@@ -1002,8 +1002,20 @@ let panStartY = 0;
 let panStartScrollLeft = 0;
 let panStartScrollTop = 0;
 
+// Sliders and colour swatches are <input> too, but space bar doesn't type anything into them — the
+// only reason this check exists is to stop space-pan from hijacking a keystroke meant for a real
+// text/number field. Blocking pan on those as well meant that after dragging ANY slider (zoom,
+// threshold, colour count, brush size, all of them — focus lands on the slider once you let go),
+// space did nothing at all until you clicked back onto the canvas first to shift focus away.
 function isTypingTarget(el){
-  return el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' || el.isContentEditable);
+  if (!el) return false;
+  if (el.isContentEditable) return true;
+  if (el.tagName === 'TEXTAREA' || el.tagName === 'SELECT') return true;
+  if (el.tagName === 'INPUT') {
+    const nonTyping = ['range', 'color', 'checkbox', 'radio', 'button', 'submit', 'file', 'image'];
+    return !nonTyping.includes((el.type || 'text').toLowerCase());
+  }
+  return false;
 }
 
 // Capture phase + preventDefault on EVERY space keydown (not just the first): holding a key
@@ -2712,7 +2724,11 @@ function paintStrokeAt(x, y){
 }
 
 canvas.addEventListener('mousedown', e => {
-  if (brushModeSelect.value === 'off' || !originalImageData || eyedropperArmed) return;
+  // Space-bar pan must win over the brush regardless of brush mode — without this check, a brush
+  // stroke started unconditionally on every mousedown whenever brush mode wasn't "off", so holding
+  // space and dragging painted instead of panning if you'd left a brush mode selected. Vector view
+  // never hit this since svgHolder has no competing mousedown handler of its own.
+  if (spacePressed || brushModeSelect.value === 'off' || !originalImageData || eyedropperArmed) return;
   e.preventDefault();
   brushActive = true;
   brushUndoStack.push(new Uint8ClampedArray(originalImageData.data));
