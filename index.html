@@ -1302,10 +1302,17 @@ customBgColorInput.addEventListener('input', e => {
 });
 
 viewSourceBtn.addEventListener('click', () => { setView(false); renderZoomSize(); });
-// Pure view switch, no side effects — the Vectorize button (Trace mode box) is now the one place
-// that explicitly triggers a trace. Download and entering Delete-shapes mode still force a fresh
-// retrace themselves first (see ensureFreshTrace below) since correctness there isn't optional.
-viewVectorBtn.addEventListener('click', () => { setView(true); renderZoomSize(); });
+// REAL BUG fixed here: this used to be a pure view switch with no side effects, on the theory that
+// only Download and Delete-shapes needed to force a fresh retrace first (see ensureFreshTrace
+// below). But the Touch-up brush panel's own on-screen text has always promised "switching to
+// VECTOR view... automatically re-traces first if anything's changed" — which this never actually
+// did, so a touch-up stroke (which deliberately does NOT auto-retrace itself, to avoid retracing
+// after every single stroke — see invalidateInFlightTrace's comment) just kept showing the OLD
+// trace from before the stroke when you clicked VECTOR, looking like the edit "didn't take" until
+// you noticed you had to hit Refresh/Vectorize explicitly. ensureFreshTrace() is already gated on
+// needsRetrace, so this costs nothing when nothing's actually changed - it only ever does real work
+// exactly when a view switch like this one would otherwise show something stale.
+viewVectorBtn.addEventListener('click', async () => { await ensureFreshTrace(); setView(true); renderZoomSize(); });
 
 const canvasPanel = document.querySelector('.canvas-panel');
 const zoomLevelInput = document.getElementById('zoomLevel');
@@ -3375,32 +3382,51 @@ function eventToImageCoords(e){
   return { x: (e.clientX - rect.left) * scaleX, y: (e.clientY - rect.top) * scaleY };
 }
 
-function paintStrokeAt(x, y){
-  const radius = parseFloat(brushSizeInput.value) / 2;
+// REAL BUG fixed here: this used to stamp one filled circle per mousemove sample (paintStrokeAt(x,
+// y), called with no memory of the previous point) instead of drawing a connected line between
+// samples. Fast or slightly jerky mouse movement produces mousemove events that are further apart
+// on screen than the brush radius, so consecutive stamps don't fully overlap - leaving a visible
+// trail of separate circular imprints (bubble-wrap pattern) instead of one clean stroke, worst on
+// Restore mode where each gap shows a hard-edged scallop rather than blending smoothly. Fixed the
+// same way Print Prep's Touch-up brush already does it: track the last point and stroke a
+// round-capped/round-joined line from it to the new point on every move, which fills in the gaps
+// regardless of how far apart the sampled points are.
+function paintStroke(from, to){
+  const size = parseFloat(brushSizeInput.value);
   const mode = brushModeSelect.value;
   if (mode === 'erase'){
     ctx.save();
+    ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.lineWidth = size;
     ctx.globalCompositeOperation = 'destination-out';
-    ctx.beginPath(); ctx.arc(x, y, radius, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.moveTo(from.x, from.y); ctx.lineTo(to.x, to.y); ctx.stroke();
     ctx.restore();
   } else if (mode === 'paint'){
     ctx.save();
+    ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.lineWidth = size;
     ctx.globalCompositeOperation = 'source-over';
-    ctx.fillStyle = brushColorInput.value;
-    ctx.beginPath(); ctx.arc(x, y, radius, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = brushColorInput.value;
+    ctx.beginPath(); ctx.moveTo(from.x, from.y); ctx.lineTo(to.x, to.y); ctx.stroke();
     ctx.restore();
   } else if (mode === 'restore'){
     if (!pristineCanvas) return;
-    // Clip to the brush circle, then clear + redraw from the pristine canvas within just that
-    // clipped region — putImageData ignores clip paths, but drawImage respects them, which is
-    // exactly why this goes through a cached canvas instead of putImageData directly.
-    ctx.save();
-    ctx.beginPath(); ctx.arc(x, y, radius, 0, Math.PI * 2); ctx.clip();
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    ctx.drawImage(pristineCanvas, 0, 0);
-    ctx.restore();
+    // Same mask-and-composite approach as Print Prep: stroke the line into a separate mask canvas,
+    // use source-in to keep only the pristine pixels that fall under that stroke, then draw just
+    // that onto the live canvas — putImageData ignores clip paths and a clip() region can't itself
+    // be stroke-shaped, so a plain clip+clearRect+drawImage (the old approach) could only ever
+    // clip to one circle at a time, never a connected stroke shape.
+    const mask = document.createElement('canvas');
+    mask.width = canvas.width; mask.height = canvas.height;
+    const mctx = mask.getContext('2d');
+    mctx.lineCap = 'round'; mctx.lineJoin = 'round'; mctx.lineWidth = size;
+    mctx.strokeStyle = '#fff';
+    mctx.beginPath(); mctx.moveTo(from.x, from.y); mctx.lineTo(to.x, to.y); mctx.stroke();
+    mctx.globalCompositeOperation = 'source-in';
+    mctx.drawImage(pristineCanvas, 0, 0);
+    ctx.drawImage(mask, 0, 0);
   }
 }
+
+let lastBrushPos = null;
 
 canvas.addEventListener('mousedown', e => {
   // Space-bar pan must win over the brush regardless of brush mode — without this check, a brush
@@ -3412,17 +3438,20 @@ canvas.addEventListener('mousedown', e => {
   brushActive = true;
   brushUndoStack.push(new Uint8ClampedArray(originalImageData.data));
   if (brushUndoStack.length > 20) brushUndoStack.shift();
-  const { x, y } = eventToImageCoords(e);
-  paintStrokeAt(x, y);
+  const pos = eventToImageCoords(e);
+  lastBrushPos = pos;
+  paintStroke(pos, pos); // a plain click with no drag still needs to paint a single dab
 });
 canvas.addEventListener('mousemove', e => {
   if (!brushActive) return;
-  const { x, y } = eventToImageCoords(e);
-  paintStrokeAt(x, y);
+  const pos = eventToImageCoords(e);
+  paintStroke(lastBrushPos || pos, pos);
+  lastBrushPos = pos;
 });
 function endBrushStroke(){
   if (!brushActive) return;
   brushActive = false;
+  lastBrushPos = null;
   originalImageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
   // Strokes accumulate on the raster canvas (still visible in Source view) without retracing
   // after every single one — a full retrace can be slow enough on a busy image to get in the way
