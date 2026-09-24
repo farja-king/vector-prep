@@ -210,29 +210,56 @@
 }
 </script>
 <style>
-  @import url('https://fonts.googleapis.com/css2?family=Oswald:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap');
 
   :root{
-    --canvas:#EDE8DF;
-    --ink:#1B1B18;
+    /* Dark theme, distinct from Graphic Suite's own chrome colors but in
+       the same dark family — this is the tool's content area, not the
+       suite's sidebar/toolbar, so it deliberately isn't identical to
+       either. --ink now plays a light/foreground role (text, the tool's
+       original bold "boxy" borders, and inverted-fill button states) —
+       everything that was near-black on a light page is now near-white
+       on a dark one, keeping the same strong high-contrast graphic
+       identity rather than softening it into a generic dark UI. */
+    --canvas:#1a1c22;
+    --ink:#e7e9ee;
     --thread-red:#B23A26;
     --thread-blue:#2F4858;
     --stitch-gold:#B8935F;
-    --paper-line:#D8D0C0;
-    --white:#FBFAF6;
+    --paper-line:#262a33;
+    --white:#23262e;
+    --field-border:#3a3f4a;
   }
 
   *{box-sizing:border-box;}
+  html{height:100%;}
   body{
+    height:100%;
     margin:0;
+    /* No scrolling at all once a design is loaded — see the .wrap:has(.stage.on)
+       rules below, which shrink the intro/drop-zone and cap the preview to
+       fit whatever's left of the viewport instead. */
+    overflow:hidden;
     background:var(--canvas);
-    font-family:'IBM Plex Sans',sans-serif;
+    font-family:'Segoe UI',sans-serif;
     color:var(--ink);
     background-image:radial-gradient(var(--paper-line) 1px, transparent 1px);
     background-size:14px 14px;
   }
 
   .wrap{max-width:960px;margin:0 auto;padding:36px 20px 60px;}
+
+  /* Once an image is loaded, the intro text and the full drop-zone prompt
+     are just wasted vertical space competing with the canvas for room —
+     shrink them down so the working area (rail full height, canvas, the
+     popouts) gets it instead, and the whole tool fits one screen with no
+     page scrollbar. Re-opening a different file still works via the
+     shrunk drop zone (its click-to-choose and drag-drop behavior is
+     unchanged — only its size and prompt text collapse). */
+  .wrap:has(.stage.on){padding-top:14px; padding-bottom:14px;}
+  .wrap:has(.stage.on) .sub{display:none;}
+  .wrap:has(.stage.on) .drop{padding:16px 20px; margin-bottom:10px;}
+  .wrap:has(.stage.on) .footnote{display:none;}
+  .wrap:has(.stage.on) .start-over-btn{margin-top:8px;}
 
   header{
     display:flex;
@@ -243,7 +270,7 @@
     margin-bottom:8px;
   }
   h1{
-    font-family:'Oswald',sans-serif;
+    font-family:'Bahnschrift',sans-serif;
     font-weight:700;
     text-transform:uppercase;
     letter-spacing:0.02em;
@@ -252,14 +279,14 @@
   }
   h1 span{color:var(--thread-red);}
   .version-tag{
-    font-family:'IBM Plex Mono',monospace;
+    font-family:'Consolas',monospace;
     font-size:11px;
     color:var(--thread-blue);
     letter-spacing:0.05em;
     margin-top:2px;
   }
   .tag{
-    font-family:'IBM Plex Mono',monospace;
+    font-family:'Consolas',monospace;
     font-size:12px;
     color:var(--thread-blue);
     text-transform:uppercase;
@@ -267,7 +294,7 @@
   }
   .sub{
     font-size:14px;
-    color:#5c5a52;
+    color:#9aa0ac;
     margin:10px 0 28px;
     max-width:520px;
     line-height:1.5;
@@ -282,14 +309,121 @@
     cursor:pointer;
     transition:border-color .15s, background .15s;
   }
-  .drop.drag{border-color:var(--thread-red); background:#fff;}
+  .drop.drag{border-color:var(--thread-red); background:var(--white);}
   .drop p{margin:0; font-size:15px;}
-  .drop .hint{font-family:'IBM Plex Mono',monospace; font-size:11px; color:#000;font-weight:500; margin-top:8px;}
+  .drop .hint{font-family:'Consolas',monospace; font-size:11px; color:var(--ink);font-weight:500; margin-top:8px;}
   input[type=file]{display:none;}
 
   .stage{display:none; margin-top:28px;}
-  .stage.on{display:grid; grid-template-columns:1fr 280px; gap:24px; align-items:start;}
-  @media (max-width:680px){.stage.on{grid-template-columns:1fr;}}
+  /* Traditional-graphics-app layout: a slim icon rail pinned to the left,
+     the canvas filling the rest of the WINDOW (not just the ~960px reading
+     column .wrap caps everything else to), and each tool's controls living
+     in a panel docked to the right edge of the window — like a real
+     graphics app's tool options, not squeezed into the page's own width.
+     The stage breaks out of .wrap's max-width with the standard "full
+     bleed" trick (100vw + negative margin) so it's genuinely adaptive to
+     whatever size the window actually is, edge to edge, rather than
+     capped. Only the stage does this — the intro text and drop zone above
+     it stay at a comfortable reading width. */
+  .stage.on{
+    display:block;
+    position:relative;
+    width:100vw;
+    left:50%;
+    margin-left:-50vw;
+    padding:0 24px 0 80px; /* left padding clears the fixed rail (56px + 24px gap) */
+    box-sizing:border-box;
+  }
+
+  /* Pinned flush against Graphic Suite's own left sidebar and running the
+     full height of the window, not floating with margins inside the page —
+     position:fixed here is relative to this tool's own viewport, which
+     already starts right at the suite sidebar's edge and right below its
+     toolbar, so top:0/left:0 lands exactly there with no extra offset
+     needed. Only visible while .stage has .on (it's stage's child, and a
+     display:none ancestor hides a fixed child too). */
+  .tool-rail{
+    display:flex;
+    flex-direction:column;
+    gap:6px;
+    position:fixed;
+    top:0;
+    left:0;
+    height:100vh;
+    width:56px;
+    padding-top:16px;
+    background:var(--canvas);
+    border-right:1px solid var(--field-border);
+    z-index:30;
+  }
+  .rail-btn{
+    display:flex;
+    flex-direction:column;
+    align-items:center;
+    gap:4px;
+    width:56px;
+    padding:8px 2px;
+    background:var(--white);
+    border:1px solid var(--field-border);
+    color:var(--ink);
+    cursor:pointer;
+    font-family:'Consolas',monospace;
+    font-size:9px;
+    text-transform:uppercase;
+    letter-spacing:.03em;
+  }
+  .rail-btn svg{width:20px; height:20px;}
+  .rail-btn:hover{border-color:var(--thread-red);}
+  .rail-btn.active{background:var(--thread-red); border-color:var(--thread-red); color:#fff;}
+
+  /* Fixed to the window's own right edge (not the canvas's), so it stays
+     put — same spot on screen — regardless of page scroll or how wide the
+     canvas column ends up being. */
+  .tool-popout{
+    display:none;
+    position:fixed;
+    top:24px;
+    right:24px;
+    width:300px;
+    min-width:220px;
+    min-height:120px;
+    max-height:calc(100vh - 48px);
+    overflow-y:auto;
+    z-index:20;
+    box-shadow:0 8px 28px rgba(0,0,0,0.5);
+  }
+  .tool-popout.open{display:block;}
+  .popout-resize-handle{
+    position:absolute;
+    right:1px;
+    bottom:1px;
+    width:15px;
+    height:15px;
+    cursor:nwse-resize;
+    color:var(--field-border);
+    z-index:1;
+  }
+  .popout-resize-handle:hover{color:var(--thread-red);}
+  .popout-resize-handle svg{width:100%; height:100%; display:block;}
+
+  /* The popout floats over the canvas panel's right edge, which otherwise
+     hides the zoom control and Source/Vector toggle behind it. Reserve
+     the space instead of letting them collide. */
+  body.panel-open .canvas-panel .label{padding-right:320px;}
+  .tool-popout h3{position:relative; padding-right:22px; cursor:move; user-select:none;}
+  .popout-close{
+    position:absolute;
+    top:0;
+    right:0;
+    background:transparent;
+    border:none;
+    color:var(--ink);
+    font-size:18px;
+    line-height:1;
+    cursor:pointer;
+    padding:0 2px;
+  }
+  .popout-close:hover{color:var(--thread-red);}
 
   .canvas-container{position:sticky; top:20px; min-width:0;}
 
@@ -305,7 +439,7 @@
     top:24px; right:24px;
     background:var(--ink);
     color:var(--white);
-    font-family:'IBM Plex Mono',monospace;
+    font-family:'Consolas',monospace;
     font-size:12px;
     font-weight:600;
     text-transform:uppercase;
@@ -322,20 +456,22 @@
     50% { opacity:.55; }
   }
   .canvas-panel .label{
-    font-family:'IBM Plex Mono',monospace;
+    font-family:'Consolas',monospace;
     font-size:11px;
     text-transform:uppercase;
     letter-spacing:.06em;
-    color:#000;font-weight:500;
+    color:var(--ink);font-weight:500;
     margin-bottom:10px;
     display:flex;
+    flex-wrap:wrap;
+    gap:8px 14px;
     justify-content:space-between;
     align-items:center;
   }
 
   .view-toggle{display:flex; gap:6px;}
   .view-toggle button{
-    font-family:'IBM Plex Mono',monospace;
+    font-family:'Consolas',monospace;
     font-size:11px;
     text-transform:uppercase;
     letter-spacing:.04em;
@@ -347,10 +483,10 @@
   }
   .view-toggle button.active{background:var(--ink); color:var(--white);}
 
-  .zoom-control{display:flex; gap:8px; align-items:center; font-family:'IBM Plex Sans',sans-serif; text-transform:none; letter-spacing:normal;}
-  .zoom-control label{font-size:11px; color:#000;font-weight:500; margin:0;}
+  .zoom-control{display:flex; gap:8px; align-items:center; font-family:'Segoe UI',sans-serif; text-transform:none; letter-spacing:normal;}
+  .zoom-control label{font-size:11px; color:var(--ink);font-weight:500; margin:0;}
   .zoom-control input[type=range]{width:80px; margin:0;}
-  .zoom-control .zoom-val{font-size:11px; font-family:'IBM Plex Mono',monospace; font-weight:bold; width:35px; text-align:right;}
+  .zoom-control .zoom-val{font-size:11px; font-family:'Consolas',monospace; font-weight:bold; width:35px; text-align:right;}
 
   /* flex + margin:auto on the canvas/svg (below) centers it whenever it's smaller than this
      box; align-items:flex-start (not center) is required so overflow:auto can actually scroll
@@ -373,18 +509,42 @@
   }
   .preview-holder.checker{
     background-image:
-      linear-gradient(45deg, #ddd 25%, transparent 25%),
-      linear-gradient(-45deg, #ddd 25%, transparent 25%),
-      linear-gradient(45deg, transparent 75%, #ddd 75%),
-      linear-gradient(-45deg, transparent 75%, #ddd 75%);
+      linear-gradient(45deg, #2c2f37 25%, transparent 25%),
+      linear-gradient(-45deg, #2c2f37 25%, transparent 25%),
+      linear-gradient(45deg, transparent 75%, #2c2f37 75%),
+      linear-gradient(-45deg, transparent 75%, #2c2f37 75%);
     background-size:16px 16px;
     background-position:0 0, 0 8px, 8px -8px, -8px 0px;
   }
+
+  /* Background picker (view-only): lets dark/light artwork be judged against different backdrops.
+     Never touches the exported file - it only restyles the preview box behind the artwork. */
+  .bg-picker{display:flex; align-items:center; gap:6px;}
+  .bg-picker .bg-label{font-size:11px; font-family:'Consolas',monospace; font-weight:bold; text-transform:uppercase; letter-spacing:.06em;}
+  .swatch-row{display:flex; gap:6px; flex-wrap:wrap;}
+  .swatch-btn{width:20px; height:20px; border-radius:50%; border:2px solid var(--ink); cursor:pointer; padding:0; box-sizing:border-box; display:block;}
+  .swatch-btn.active{outline:2px solid var(--thread-red); outline-offset:2px;}
+  .swatch-btn.auto-swatch{background:var(--canvas);}
+  .swatch-btn.custom-swatch{background:conic-gradient(red, yellow, lime, cyan, blue, magenta, red); overflow:hidden; position:relative;}
+  .swatch-btn.custom-swatch input[type=color]{position:absolute; inset:-4px; opacity:0; cursor:pointer; border:none; padding:0;}
 
   canvas{display:block; margin:auto; flex-shrink:0;}
   canvas.brush-active{cursor:crosshair;}
   canvas.pan-active{cursor:grab;}
   canvas.pan-active:active{cursor:grabbing;}
+
+  /* Crop marquee — darkens everywhere outside the drawn box, same look as the other tools'
+     crop preview. Positioned in JS via canvas.offsetLeft/offsetTop, which stay correct
+     regardless of zoom or centering since they're relative to previewHolder. */
+  #cropMarqueeOverlay{
+    position:absolute;
+    top:0; left:0; width:0; height:0;
+    box-shadow:0 0 0 9999px rgba(0,0,0,0.55);
+    border:2px dashed #fff;
+    pointer-events:none;
+    display:none;
+  }
+  #cropMarqueeOverlay.show{display:block;}
   #svgHolder{display:none; margin:auto; flex-shrink:0;}
   #svgHolder svg{display:block;}
   #svgHolder.delete-active path{cursor:pointer;}
@@ -396,7 +556,7 @@
   .tools{display:flex; flex-direction:column; gap:14px;}
   .tool-block{background:var(--white); border:1px solid var(--ink); padding:14px;}
   .tool-block h3{
-    font-family:'Oswald',sans-serif;
+    font-family:'Bahnschrift',sans-serif;
     font-size:14px;
     text-transform:uppercase;
     letter-spacing:.04em;
@@ -405,12 +565,12 @@
     align-items:center;
     gap:8px;
   }
-  .tool-block h3 .n{font-family:'IBM Plex Mono',monospace; font-size:11px; color:var(--thread-red);}
-  .tool-block p.hint{font-size:11px;color:#000;font-weight:500;margin:4px 0 12px;line-height:1.4;}
+  .tool-block h3 .n{font-family:'Consolas',monospace; font-size:11px; color:var(--thread-red);}
+  .tool-block p.hint{font-size:11px;color:var(--ink);font-weight:500;margin:4px 0 12px;line-height:1.4;}
 
   button.action{
     width:100%;
-    font-family:'IBM Plex Sans',sans-serif;
+    font-family:'Segoe UI',sans-serif;
     font-weight:600;
     font-size:13px;
     padding:9px 10px;
@@ -430,13 +590,18 @@
     border-color:var(--thread-red);
   }
   @keyframes flashBtn{0%{background-position:0% 0%;} 100%{background-position:-220% 0%;}}
+  button.action.done-state{
+    background:#2e7d32;
+    border-color:#2e7d32;
+    color:#fff;
+  }
   button.ghost{background:transparent; color:var(--ink);}
   button.ghost:hover{background:var(--ink); color:var(--white);}
   .start-over-btn{
     display:block;
     width:100%;
     margin-top:14px;
-    font-family:'IBM Plex Sans',sans-serif;
+    font-family:'Segoe UI',sans-serif;
     font-weight:700;
     font-size:14px;
     text-transform:uppercase;
@@ -451,27 +616,28 @@
   .start-over-btn:active{transform:translateY(1px);}
 
   .row{display:flex; gap:8px; margin-bottom:8px; align-items:center;}
-  .row label{font-size:11px; color:#000;font-weight:500; display:block; margin-bottom:3px; font-family:'IBM Plex Mono',monospace; flex:1;}
-  .row .val{width:44px; text-align:right; font-family:'IBM Plex Mono',monospace; font-size:12px; font-weight:bold; margin-top:8px;}
+  .row label{font-size:11px; color:var(--ink);font-weight:500; display:block; margin-bottom:3px; font-family:'Consolas',monospace; flex:1;}
+  .row .val{width:44px; text-align:right; font-family:'Consolas',monospace; font-size:12px; font-weight:bold; margin-top:8px;}
   input[type=range]{width:100%; accent-color:var(--thread-red);}
-  select{width:100%;font-family:'IBM Plex Mono',monospace;font-size:12px;padding:6px 8px;border:1px solid #c9c2b2;background:#fff;}
+  select{width:100%;font-family:'Consolas',monospace;font-size:12px;padding:6px 8px;border:1px solid var(--field-border);background:var(--white);color:var(--ink);}
 
   .slider-row{display:flex; gap:8px; align-items:flex-end; margin-bottom:8px;}
   .slider-row .slider-col{flex:1;}
-  .slider-row .slider-col label{font-size:11px; color:#000;font-weight:500; display:block; margin-bottom:3px; font-family:'IBM Plex Mono',monospace;}
+  .slider-row .slider-col label{font-size:11px; color:var(--ink);font-weight:500; display:block; margin-bottom:3px; font-family:'Consolas',monospace;}
 
   /* Custom up/down stepper rather than relying on the browser's native <input type=number>
      spinner — that spinner is inconsistent (hidden entirely in some browsers/zoom levels,
      squeezed invisible in a narrow box in others), so we build our own to guarantee it's
      always there. */
-  .num-stepper{display:flex; width:82px; border:1px solid #c9c2b2; background:#fff;}
+  .num-stepper{display:flex; width:82px; border:1px solid var(--field-border); background:var(--white);}
   .num-stepper .num-input{
     flex:1;
     width:0;
     min-width:0;
     border:none;
     background:transparent;
-    font-family:'IBM Plex Mono',monospace;
+    color:var(--ink);
+    font-family:'Consolas',monospace;
     font-size:12px;
     font-weight:bold;
     text-align:right;
@@ -480,7 +646,7 @@
   .num-input::-webkit-outer-spin-button,
   .num-input::-webkit-inner-spin-button{ -webkit-appearance:none; margin:0; }
   .num-input[type=number]{ -moz-appearance:textfield; }
-  .num-stepper .stepper-btns{display:flex; flex-direction:column; border-left:1px solid #c9c2b2;}
+  .num-stepper .stepper-btns{display:flex; flex-direction:column; border-left:1px solid var(--field-border);}
   .stepper-btn{
     border:none;
     background:var(--white);
@@ -495,21 +661,21 @@
     align-items:center;
     justify-content:center;
   }
-  .stepper-btn:not(:last-child){border-bottom:1px solid #c9c2b2;}
+  .stepper-btn:not(:last-child){border-bottom:1px solid var(--field-border);}
   .stepper-btn:hover{background:var(--thread-red); color:#fff;}
-  .stepper-btn:active{background:var(--ink); color:#fff;}
+  .stepper-btn:active{background:var(--ink); color:var(--white);}
 
   .swatch-list{display:flex; flex-wrap:wrap; gap:6px;}
   .swatch-list .sw{
     width:26px; height:26px; border-radius:50%;
     border:2px solid var(--ink);
   }
-  .swatch-empty{font-size:11px; color:#000;font-weight:500; font-family:'IBM Plex Mono',monospace;}
+  .swatch-empty{font-size:11px; color:var(--ink);font-weight:500; font-family:'Consolas',monospace;}
 
   .meta{
-    font-family:'IBM Plex Mono',monospace;
+    font-family:'Consolas',monospace;
     font-size:11px;
-    color:#000;font-weight:500;
+    color:var(--ink);font-weight:500;
     margin-top:6px;
     display:flex;
     justify-content:space-between;
@@ -521,11 +687,20 @@
   .footnote{
     margin-top:34px;
     font-size:12px;
-    color:#000;font-weight:500;
+    color:var(--ink);font-weight:500;
     border-top:1px solid var(--paper-line);
     padding-top:14px;
     line-height:1.6;
   }
+</style>
+<style id="gs-busy-style">
+/* Busy indicator (shared across Graphic Suite tools): a spinner pill + progress cursor so a long
+   operation never looks like a crash. */
+#gsBusy{position:fixed;top:14px;left:50%;transform:translateX(-50%);z-index:2147483000;display:none;align-items:center;gap:10px;padding:8px 18px 8px 12px;background:#23262e;color:#e7e9ee;border:1px solid #3a3f4a;border-radius:999px;box-shadow:0 6px 24px rgba(0,0,0,.45);font:600 13px system-ui,"Segoe UI",sans-serif;pointer-events:none;}
+#gsBusy.show{display:flex;}
+#gsBusy .gs-spin{width:16px;height:16px;border:3px solid rgba(255,255,255,.25);border-top-color:#fff;border-radius:50%;animation:gsSpin .8s linear infinite;}
+@keyframes gsSpin{to{transform:rotate(360deg);}}
+html.gs-busy, html.gs-busy *{cursor:progress !important;}
 </style>
 </head>
 <body>
@@ -534,7 +709,7 @@
   <header>
     <div>
       <h1>Vector<span>Prep</span></h1>
-      <div class="version-tag">Version 3.5</div>
+      <div class="version-tag">Version 3.6</div>
     </div>
     <div class="tag">Trace &amp; Export • SVG Ready</div>
   </header>
@@ -556,12 +731,52 @@
   </div>
 
   <div class="stage" id="stage">
+    <nav class="tool-rail" id="toolRail">
+      <button type="button" class="rail-btn" data-panel="panel-upscale" title="Upscale (AI)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 4H4v5M15 4h5v5M4 15v5h5M20 15v5h-5"/></svg>
+        <span>Upscale</span>
+      </button>
+      <button type="button" class="rail-btn" data-panel="panel-crop" title="Crop">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 2v14a2 2 0 0 0 2 2h14M2 6h14a2 2 0 0 1 2 2v14"/></svg>
+        <span>Crop</span>
+      </button>
+      <button type="button" class="rail-btn" data-panel="panel-trace" title="Trace mode">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="2"/><circle cx="18" cy="6" r="2"/><circle cx="12" cy="18" r="2"/><path d="M7.6 7.2 11 16M16.4 7.2 13 16M8 6h8"/></svg>
+        <span>Trace</span>
+      </button>
+      <button type="button" class="rail-btn" data-panel="panel-detail" title="Detail">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h9M17 7h3M4 17h3M11 17h9"/><circle cx="14" cy="7" r="2.3"/><circle cx="8" cy="17" r="2.3"/></svg>
+        <span>Detail</span>
+      </button>
+      <button type="button" class="rail-btn" data-panel="panel-touchup" title="Touch-up brush">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20c1-4 2-6 4-6s2 2 3 2 2-8 5-11 5 2 2 5-9 4-9 5 2 2 2 3-3 3-7 2Z"/></svg>
+        <span>Touch-up</span>
+      </button>
+      <button type="button" class="rail-btn" data-panel="panel-export" title="Export">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 15V4m0 0L8 8m4-4 4 4"/><path d="M5 15v3a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-3"/></svg>
+        <span>Export</span>
+      </button>
+    </nav>
     <div class="canvas-container">
       <div class="canvas-panel">
         <div class="processing-overlay" id="processingOverlay">⏳ Processing…</div>
         <div class="label">
           <span>Preview</span>
           <div style="display:flex; gap:14px; align-items:center;">
+            <div class="bg-picker" title="Preview background - view only, never changes your exported file">
+              <span class="bg-label">Background</span>
+              <div class="swatch-row" id="bgSwatchRow">
+                <button type="button" class="swatch-btn auto-swatch active" data-bg="auto" title="Default (dark)"></button>
+                <button type="button" class="swatch-btn" data-bg="#121212" title="Black" style="background:#121212;"></button>
+                <button type="button" class="swatch-btn" data-bg="#FFFFFF" title="White" style="background:#FFFFFF;"></button>
+                <button type="button" class="swatch-btn" data-bg="#1D2951" title="Navy" style="background:#1D2951;"></button>
+                <button type="button" class="swatch-btn" data-bg="#E40000" title="Red" style="background:#E40000;"></button>
+                <button type="button" class="swatch-btn" data-bg="#1E7B34" title="Green" style="background:#1E7B34;"></button>
+                <button type="button" class="swatch-btn" data-bg="#B0B0B0" title="Heather Grey" style="background:#B0B0B0;"></button>
+                <button type="button" class="swatch-btn" data-bg="#EDE0C8" title="Natural" style="background:#EDE0C8;"></button>
+                <label class="swatch-btn custom-swatch" title="Custom colour"><input type="color" id="customBgColor" value="#888888"></label>
+              </div>
+            </div>
             <div class="zoom-control">
               <label>Zoom (scroll to zoom on cursor):</label>
               <input type="range" id="zoomLevel" min="1" max="500" value="100">
@@ -576,6 +791,7 @@
         <div class="preview-holder" id="previewHolder">
           <canvas id="canvas"></canvas>
           <div id="svgHolder"></div>
+          <div id="cropMarqueeOverlay"></div>
         </div>
         <div class="meta">
           <span>output <b id="dims">—</b></span>
@@ -587,8 +803,42 @@
     </div>
 
     <div class="tools">
-      <div class="tool-block">
-        <h3><span class="n">00</span> Trace mode</h3>
+      <div class="tool-block tool-popout" id="panel-upscale">
+        <h3><span class="n">00</span> Upscale (AI)<button type="button" class="popout-close" data-close title="Close">&times;</button></h3>
+        <p class="hint">Real AI reconstruction (same engine as the Upscale tool) — runs fully offline, no blanket resize. Do this before tracing if the source image is small or soft, for a cleaner trace.</p>
+        <div class="row" style="margin-bottom:12px;">
+          <select id="upscaleFactor">
+            <option value="2">2x Density Enhancement</option>
+            <option value="4" selected>4x Smart Upscale</option>
+            <option value="8">8x Max Density Upscale</option>
+          </select>
+        </div>
+        <label style="font-size:11px; color:var(--ink);font-weight:500; display:block; margin-bottom:6px;">Artwork type</label>
+        <div style="display:flex; gap:8px; margin-bottom:12px;">
+          <label style="display:flex;align-items:center;gap:5px;font-size:11px;font-weight:500;">
+            <input type="radio" name="upscaleModel" value="photo" checked style="margin:0;">Photo/realistic
+          </label>
+          <label style="display:flex;align-items:center;gap:5px;font-size:11px;font-weight:500;">
+            <input type="radio" name="upscaleModel" value="illustration" style="margin:0;">Illustration/flat colour
+          </label>
+        </div>
+        <button class="action" id="applyUpscale">Execute HD Upscale</button>
+      </div>
+
+      <div class="tool-block tool-popout" id="panel-crop">
+        <h3><span class="n">01</span> Crop<button type="button" class="popout-close" data-close title="Close">&times;</button></h3>
+        <p class="hint">Crop out empty space or unwanted background before tracing — the tracer then only spends time on the artwork itself, and the exported SVG isn't padded with a blank margin. Works on the source picture (Source view), before Vectorize.</p>
+        <button class="action ghost" id="trimToContentBtn" style="margin-top:0;">Trim to Content</button>
+        <p class="hint" id="vpTrimStatus" style="margin:6px 0 12px;"></p>
+        <button class="action ghost" id="cropMarqueeToggle">Draw a Crop Box</button>
+        <div class="row" id="cropMarqueeActions" style="display:none; margin-top:8px;">
+          <button class="action" id="cropMarqueeApply" style="flex:1;" disabled>Apply Crop</button>
+          <button class="action ghost" id="cropMarqueeCancel" style="flex:1;">Cancel</button>
+        </div>
+      </div>
+
+      <div class="tool-block tool-popout" id="panel-trace">
+        <h3><span class="n">02</span> Trace mode<button type="button" class="popout-close" data-close title="Close">&times;</button></h3>
         <p class="hint">Line art / logos give the cleanest single-colour trace. Color mode posterizes photos into flat vector regions. Greyscale does the same but in tonal shades of grey, no hue.</p>
         <button class="action ghost" id="suggestSettings" style="margin-bottom:12px;">✨ Suggest Settings for This Image</button>
         <div class="row" style="margin-bottom:12px;">
@@ -611,7 +861,7 @@
             </div>
             <input type="number" class="num-input" id="thresholdNum" min="1" max="254" step="1" value="70">
           </div>
-          <label style="font-size:11px; color:#000;font-weight:500; display:block; margin-top:4px;">
+          <label style="font-size:11px; color:var(--ink);font-weight:500; display:block; margin-top:4px;">
             <input type="checkbox" id="invert"> Invert (trace the light areas instead)
           </label>
           <button class="action ghost" id="resetTraceMode" style="margin-top:10px;">Reset Trace Mode to Defaults</button>
@@ -628,16 +878,16 @@
           <button class="action ghost" id="resetColorCount" style="margin-top:10px;">Reset Color Count to Default</button>
 
           <div id="paletteBlock" style="display:none; margin-top:14px; padding-top:14px; border-top:1px solid var(--paper-line);">
-            <div style="font-family:'Oswald',sans-serif;font-weight:700;font-size:13px;text-transform:uppercase;letter-spacing:.04em;margin-bottom:8px;" id="paletteBlockTitle">Detected palette</div>
+            <div style="font-family:'Bahnschrift',sans-serif;font-weight:700;font-size:13px;text-transform:uppercase;letter-spacing:.04em;margin-bottom:8px;" id="paletteBlockTitle">Detected palette</div>
             <p class="hint">Click a color to give it its own curve fit / edge smoothing, overriding the shared Detail settings just for that color.</p>
             <div class="swatch-list" id="swatchList"><span class="swatch-empty">Trace an image to see colors</span></div>
             <div id="colorOverridePanel" style="display:none; margin-top:12px; padding-top:12px; border-top:1px solid var(--paper-line);">
-              <div style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:#000;font-weight:500;margin-bottom:8px;display:flex;align-items:center;gap:8px;justify-content:space-between;">
+              <div style="font-family:'Consolas',monospace;font-size:11px;color:var(--ink);font-weight:500;margin-bottom:8px;display:flex;align-items:center;gap:8px;justify-content:space-between;">
                 <div style="display:flex;align-items:center;gap:8px;">
                   <span id="overrideColorSwatch" style="width:16px;height:16px;border-radius:50%;border:2px solid var(--ink);display:inline-block;"></span>
                   <span>Editing this color only</span>
                 </div>
-                <button type="button" id="overrideCollapse" title="Close (your changes stay applied — click a swatch to reopen)" style="border:1px solid #c9c2b2;background:#fff;color:var(--ink);cursor:pointer;font-family:'IBM Plex Mono',monospace;font-size:11px;line-height:1;width:20px;height:20px;padding:0;">✕</button>
+                <button type="button" id="overrideCollapse" title="Close (your changes stay applied — click a swatch to reopen)" style="border:1px solid var(--field-border);background:var(--white);color:var(--ink);cursor:pointer;font-family:'Consolas',monospace;font-size:11px;line-height:1;width:20px;height:20px;padding:0;">✕</button>
               </div>
               <div class="slider-row">
                 <div class="slider-col">
@@ -698,8 +948,8 @@
         </div>
       </div>
 
-      <div class="tool-block">
-        <h3><span class="n">01</span> Detail</h3>
+      <div class="tool-block tool-popout" id="panel-detail">
+        <h3><span class="n">03</span> Detail<button type="button" class="popout-close" data-close title="Close">&times;</button></h3>
         <p class="hint">Images are automatically supersampled before tracing for smoother, more accurate curves — these controls fine-tune fidelity on top of that.</p>
         <div class="row" style="margin-bottom:12px;">
           <select id="supersample">
@@ -740,7 +990,7 @@
           <input type="number" class="num-input" id="smoothingNum" min="0" max="40" step="0.1" value="0">
         </div>
 
-        <label style="font-size:11px; color:#000;font-weight:500; display:block; margin-top:4px;">
+        <label style="font-size:11px; color:var(--ink);font-weight:500; display:block; margin-top:4px;">
           <input type="checkbox" id="rightAngle" checked> Sharpen right-angle corners (logos/text)
         </label>
 
@@ -752,7 +1002,7 @@
              better without it. Left fully in place (markup, IDs, event listeners, JS functions
              all untouched) in case it's wanted back later: just remove this display:none / restore
              the "0N" numbering below to re-enable it. -->
-        <h3><span class="n">02</span> Delete shapes</h3>
+        <h3><span class="n">04</span> Delete shapes</h3>
         <p class="hint">Click a shape in the Vector preview to select it (and, at Tolerance scope, every similarly-colored shape near it), then click it again — or press Delete Selected — to remove it. Erases the underlying source pixels, so deletions survive re-tracing. Switches to Vector view automatically.</p>
         <div class="row" style="margin-bottom:12px;">
           <select id="deleteScope">
@@ -780,8 +1030,8 @@
         <button class="action ghost" id="deleteResetAll">Reset All Touch-ups</button>
       </div>
 
-      <div class="tool-block">
-        <h3><span class="n">02</span> Touch-up brush</h3>
+      <div class="tool-block tool-popout" id="panel-touchup">
+        <h3><span class="n">04</span> Touch-up brush<button type="button" class="popout-close" data-close title="Close">&times;</button></h3>
         <p class="hint">Paints directly onto the source pixels (Source view), so edits get traced properly instead of sitting on top as a raster patch. Switches to Source view automatically.</p>
         <div class="row" style="margin-bottom:12px;">
           <select id="brushMode">
@@ -794,11 +1044,11 @@
         <div id="brushPaintControls" style="display:none;">
           <div class="row" style="align-items:center; margin-bottom:8px;">
             <label style="flex:1;">Paint color</label>
-            <input type="color" id="brushColor" value="#B23A26" style="width:44px; height:28px; padding:0; border:1px solid #c9c2b2; cursor:pointer;">
+            <input type="color" id="brushColor" value="#B23A26" style="width:44px; height:28px; padding:0; border:1px solid var(--field-border); cursor:pointer;">
           </div>
           <button class="action ghost" id="eyedropperBtn" style="margin-bottom:12px;">🎨 Pick Color From Image</button>
         </div>
-        <label style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:#000;font-weight:500;">Brush size — <span id="brushSizeVal">30</span>px</label>
+        <label style="font-family:'Consolas',monospace;font-size:11px;color:var(--ink);font-weight:500;">Brush size — <span id="brushSizeVal">30</span>px</label>
         <input type="range" id="brushSize" min="4" max="150" value="30">
         <div style="height:8px"></div>
         <p class="hint" style="margin-top:0;">Edits (brush strokes, deletes) are staged on the source pixels immediately — switching to VECTOR view or downloading automatically re-traces first if anything's changed, so there's never a separate step needed.</p>
@@ -806,11 +1056,13 @@
         <button class="action ghost" id="brushResetAll" style="margin-bottom:12px;">Reset All Touch-ups</button>
       </div>
 
-      <div class="tool-block">
-        <h3><span class="n">03</span> Export</h3>
+      <div class="tool-block tool-popout" id="panel-export">
+        <h3><span class="n">05</span> Export<button type="button" class="popout-close" data-close title="Close">&times;</button></h3>
         <button class="action" id="downloadSvg" style="margin-bottom:8px;">Download SVG</button>
         <button class="action ghost" id="downloadPng" style="margin-bottom:8px;">Download PNG Preview</button>
-        <div id="traceStatus" style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:#000;font-weight:500;margin-top:8px;min-height:14px;"></div>
+        <button class="action ghost" id="saveToSuite" style="margin-bottom:8px; display:none;">Save to Gallery</button>
+        <button class="action ghost" id="sendToGang" style="margin-bottom:8px; display:none;">Send to Gang Sheets</button>
+        <div id="traceStatus" style="display:none;"></div>
         <div style="margin-top:8px;display:flex;flex-direction:column;gap:8px;">
           <a href="https://www.buymeacoffee.com/Vector_Print_Prep" target="_blank" style="display:block;width:100%;">
             <img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me a Coffee" style="width:100%;height:auto;display:block;border-radius:4px;">
@@ -823,13 +1075,81 @@
     </div>
   </div>
 
-  <div class="footnote">
-    Local client sandbox • All processing in-browser.<br>
-    © 2026 Crystal Groupz. All rights reserved. — hello@crystalgroupz.co.uk
-  </div>
+  <!-- The standalone site's own footer (branding + copyright for a different business entirely)
+       removed here for the same reason the header logo was removed above: Graphic Suite's own
+       shell already provides the app's identity, and this tool is shared between two different
+       apps (Crystal Suite, Graphical Magic) - a hardcoded brand name here would be wrong in
+       whichever app it wasn't meant for. -->
 </div>
 
-<script src="https://cdn.jsdelivr.net/npm/imagetracerjs@1.2.6/imagetracer_v1.2.6.js"></script>
+<!-- Vendored locally (vendor/imagetracer_v1.2.6.js) instead of loaded from
+     jsdelivr so the trace engine works fully offline. Same public-domain
+     file, unmodified — see that file's own header for the license. -->
+<script id="gs-busy-script">
+window.GSBusy = (function () {
+  var count = 0, timer = null, el = null, label = 'Working…';
+  function ensure() {
+    if (el) return el;
+    el = document.createElement('div');
+    el.id = 'gsBusy';
+    el.setAttribute('role', 'status');
+    el.innerHTML = '<div class="gs-spin"></div><span></span>';
+    document.body.appendChild(el);
+    return el;
+  }
+  function show() {
+    var e = ensure();
+    e.querySelector('span').textContent = label;
+    e.classList.add('show');
+    document.documentElement.classList.add('gs-busy');
+  }
+  function hide() {
+    if (el) el.classList.remove('show');
+    document.documentElement.classList.remove('gs-busy');
+  }
+  // immediate=true shows straight away (use for work known to be slow); otherwise a 150ms delay
+  // avoids flicker on quick operations. Every start() must be paired with exactly one stop().
+  function start(text, immediate) {
+    count++;
+    if (text) label = text;
+    if (count === 1) {
+      clearTimeout(timer);
+      if (immediate) show(); else timer = setTimeout(show, 150);
+    } else if (el && el.classList.contains('show')) {
+      el.querySelector('span').textContent = label;
+    }
+  }
+  function stop() {
+    count = Math.max(0, count - 1);
+    if (count === 0) { clearTimeout(timer); hide(); }
+  }
+  function setLabel(text) {
+    label = text;
+    if (el) el.querySelector('span').textContent = text;
+  }
+  // Lets the spinner paint before synchronous heavy work blocks the thread, then always clears it.
+  function nextPaint() { return new Promise(function (r) { requestAnimationFrame(function () { setTimeout(r, 0); }); }); }
+  async function run(text, fn) {
+    start(text, true);
+    try { await nextPaint(); return await fn(); } finally { stop(); }
+  }
+  // A task with a live percentage in the pill, e.g. task("Loading image") -> "Loading image — 42%".
+  // Call progress(0..1) as work advances and finish() exactly once when done (safe to call twice).
+  function task(text) {
+    var finished = false;
+    start(text + " — 0%", true);
+    return {
+      progress: function (fraction) {
+        if (finished) return;
+        setLabel(text + " — " + Math.max(0, Math.min(100, Math.round(fraction * 100))) + "%");
+      },
+      finish: function () { if (finished) return; finished = true; stop(); }
+    };
+  }
+  return { start: start, stop: stop, setLabel: setLabel, run: run, task: task };
+})();
+</script>
+<script src="vendor/imagetracer_v1.2.6.js"></script>
 <script>
 const drop = document.getElementById('drop');
 const fileInput = document.getElementById('file');
@@ -939,6 +1259,31 @@ function setView(showVector){
   viewSourceBtn.classList.toggle('active', !showVector);
   viewVectorBtn.classList.toggle('active', showVector);
 }
+// --- Preview background picker (view-only) ---
+// Inline styles beat the .checker class, so a chosen colour wins in both Source and Vector view;
+// "auto" clears them so the original dark/checkerboard behaviour returns.
+function setPreviewBackground(bg){
+  if(bg === 'auto'){
+    previewHolder.style.removeProperty('background-color');
+    previewHolder.style.removeProperty('background-image');
+  }else{
+    previewHolder.style.setProperty('background-color', bg);
+    previewHolder.style.setProperty('background-image', 'none');
+  }
+}
+function setActiveBgSwatch(el){
+  document.querySelectorAll('#bgSwatchRow .swatch-btn').forEach(b => b.classList.remove('active'));
+  el.classList.add('active');
+}
+document.querySelectorAll('#bgSwatchRow .swatch-btn[data-bg]').forEach(btn => {
+  btn.addEventListener('click', () => { setPreviewBackground(btn.dataset.bg); setActiveBgSwatch(btn); });
+});
+const customBgColorInput = document.getElementById('customBgColor');
+customBgColorInput.addEventListener('input', e => {
+  setPreviewBackground(e.target.value);
+  setActiveBgSwatch(customBgColorInput.closest('.swatch-btn'));
+});
+
 viewSourceBtn.addEventListener('click', () => { setView(false); renderZoomSize(); });
 // Pure view switch, no side effects — the Vectorize button (Trace mode box) is now the one place
 // that explicitly triggers a trace. Download and entering Delete-shapes mode still force a fresh
@@ -1098,42 +1443,275 @@ document.addEventListener('mouseup', () => {
   }
 });
 
+// Shared by loadImageFile (a brand new file) and the Upscale panel's AI
+// result (a replacement image for the one already loaded) — both hand this
+// a fully-decoded <img> and need the exact same "this is now THE image"
+// reset: resize the canvas to match, re-derive originalImageData/
+// pristineImageData from it, and clear every piece of state that belonged
+// to whatever pixels were there before (palette overrides, brush undo
+// history, auto-detect flags).
+function applyNewCanvasImage(img){
+  clearUpscaleDone();
+  // Accepts either an <img> (naturalWidth/Height) or an already-sized
+  // <canvas> (width/height) — the Upscale panel passes a canvas since it
+  // needs an extra resize pass before this becomes the working image.
+  canvas.width = img.naturalWidth || img.width;
+  canvas.height = img.naturalHeight || img.height;
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.drawImage(img, 0, 0);
+  originalImageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  // Untouched backup for the Restore brush and "Reset All Touch-ups" — captured once here,
+  // never mutated afterward, unlike originalImageData which the brush paints into directly.
+  pristineImageData = new ImageData(new Uint8ClampedArray(originalImageData.data), originalImageData.width, originalImageData.height);
+  ensurePristineCanvas();
+  brushUndoStack = [];
+  // A new image gets a fresh palette with different colors in a different order — any
+  // per-color overrides from the previous image would silently apply to the wrong colors.
+  colorOverrides = {};
+  selectedColorIndex = null;
+  pinnedPalette = null;
+  colorOverridePanel.style.display = 'none';
+  stage.classList.add('on');
+  dimsEl.textContent = canvas.width + ' × ' + canvas.height;
+  setView(false);
+  fitZoomToContainer();
+  autoFixPending = true;
+  autoFixMessage = '';
+  colorCountAutoPendingByMode = { color: true, greyscale: true };
+  // No auto-trace on load anymore — pick a mode, then click Vectorize. These one-shot flags
+  // stay armed regardless, so whichever mode is active when Vectorize is finally clicked still
+  // gets its correct first-look auto-detect.
+}
+
+// --- Crop (before tracing): "Trim to Content" (auto-crop to the bounding box of every
+// non-transparent pixel) and a manual marquee crop, both applied to the SOURCE picture — before
+// Vectorize, not to an already-traced SVG. Cropping first means the tracer never spends time on
+// empty space or unwanted background, and the exported SVG's viewBox isn't padded with a blank
+// margin either. Both funnel through applyNewCanvasImage (the same "this is now THE image" reset
+// the Upscale panel above already uses), so palette/brush-history/dims all reset correctly for
+// free, then mark the pixels changed so Download/Send to Gang Sheets force a fresh retrace
+// instead of exporting whatever the OLD, pre-crop trace last produced.
+const trimToContentBtn = document.getElementById('trimToContentBtn');
+const vpTrimStatus = document.getElementById('vpTrimStatus');
+const cropMarqueeToggleBtn = document.getElementById('cropMarqueeToggle');
+const cropMarqueeActions = document.getElementById('cropMarqueeActions');
+const cropMarqueeApplyBtn = document.getElementById('cropMarqueeApply');
+const cropMarqueeCancelBtn = document.getElementById('cropMarqueeCancel');
+const cropMarqueeOverlay = document.getElementById('cropMarqueeOverlay');
+let cropMarqueeOn = false, cropDragging = false, cropDragStart = null, cropRectPx = null;
+
+function disableCropMarquee(){
+  cropMarqueeOn = false;
+  cropDragging = false;
+  cropDragStart = null;
+  cropRectPx = null;
+  cropMarqueeToggleBtn.textContent = 'Draw a Crop Box';
+  cropMarqueeActions.style.display = 'none';
+  cropMarqueeApplyBtn.disabled = true;
+  cropMarqueeOverlay.classList.remove('show');
+  canvas.classList.remove('brush-active');
+}
+
+// sx/sy/sw/sh are native source-picture pixel coordinates.
+function applyCropToSource(sx, sy, sw, sh){
+  sx = Math.max(0, Math.round(sx)); sy = Math.max(0, Math.round(sy));
+  sw = Math.round(sw); sh = Math.round(sh);
+  sw = Math.min(sw, canvas.width - sx); sh = Math.min(sh, canvas.height - sy);
+  if (sw < 4 || sh < 4) return false; // too small to be a real crop
+  if (sx === 0 && sy === 0 && sw === canvas.width && sh === canvas.height) return false; // no-op
+
+  const cropped = document.createElement('canvas');
+  cropped.width = sw; cropped.height = sh;
+  cropped.getContext('2d').drawImage(canvas, sx, sy, sw, sh, 0, 0, sw, sh);
+  applyNewCanvasImage(cropped);
+  invalidateInFlightTrace(); // the old SVG (if any) no longer matches this picture
+  return true;
+}
+
+trimToContentBtn.addEventListener('click', () => {
+  if (!originalImageData) return;
+  setView(false); // crop works on the source picture, same as the touch-up brush forces Source view
+  const w = canvas.width, h = canvas.height;
+  const data = ctx.getImageData(0, 0, w, h).data;
+  let minX = w, minY = h, maxX = -1, maxY = -1;
+  for (let y = 0; y < h; y++){
+    for (let x = 0; x < w; x++){
+      if (data[(y * w + x) * 4 + 3] > 0){
+        if (x < minX) minX = x; if (x > maxX) maxX = x;
+        if (y < minY) minY = y; if (y > maxY) maxY = y;
+      }
+    }
+  }
+  if (maxX < 0) { vpTrimStatus.textContent = 'Nothing to trim — the picture is empty.'; return; }
+  const sw = maxX - minX + 1, sh = maxY - minY + 1;
+  if (minX === 0 && minY === 0 && sw === w && sh === h) {
+    vpTrimStatus.textContent = "Nothing to trim — there's no empty space around the edges.";
+    return;
+  }
+  const savedPct = Math.round((1 - (sw * sh) / (w * h)) * 100);
+  if (applyCropToSource(minX, minY, sw, sh)) {
+    vpTrimStatus.textContent = `Trimmed to ${sw} × ${sh} (${savedPct}% less empty space).`;
+  }
+});
+
+cropMarqueeToggleBtn.addEventListener('click', () => {
+  if (!originalImageData) return;
+  cropMarqueeOn = !cropMarqueeOn;
+  cropMarqueeToggleBtn.textContent = cropMarqueeOn ? 'Cancel — drag a box on the picture' : 'Draw a Crop Box';
+  canvas.classList.toggle('brush-active', cropMarqueeOn);
+  cropMarqueeActions.style.display = cropMarqueeOn ? 'flex' : 'none';
+  cropMarqueeApplyBtn.disabled = true;
+  cropRectPx = null;
+  cropMarqueeOverlay.classList.remove('show');
+  if (cropMarqueeOn) setView(false);
+});
+
+function canvasPointFromEvent(e){
+  const rect = canvas.getBoundingClientRect();
+  return {
+    x: Math.max(0, Math.min(canvas.width, (e.clientX - rect.left) / rect.width * canvas.width)),
+    y: Math.max(0, Math.min(canvas.height, (e.clientY - rect.top) / rect.height * canvas.height)),
+  };
+}
+function updateCropMarqueeOverlay(x0, y0, x1, y1){
+  const rect = canvas.getBoundingClientRect();
+  const scaleX = rect.width / canvas.width, scaleY = rect.height / canvas.height;
+  const sx = Math.min(x0, x1), sy = Math.min(y0, y1);
+  const sw = Math.abs(x1 - x0), sh = Math.abs(y1 - y0);
+  cropMarqueeOverlay.style.left = (canvas.offsetLeft + sx * scaleX) + 'px';
+  cropMarqueeOverlay.style.top = (canvas.offsetTop + sy * scaleY) + 'px';
+  cropMarqueeOverlay.style.width = (sw * scaleX) + 'px';
+  cropMarqueeOverlay.style.height = (sh * scaleY) + 'px';
+  cropMarqueeOverlay.classList.add('show');
+}
+
+canvas.addEventListener('mousedown', (e) => {
+  if (!cropMarqueeOn || spacePressed) return;
+  cropDragging = true;
+  cropDragStart = canvasPointFromEvent(e);
+  cropMarqueeApplyBtn.disabled = true;
+  e.preventDefault();
+});
+document.addEventListener('mousemove', (e) => {
+  if (!cropMarqueeOn || !cropDragging || !cropDragStart) return;
+  const p = canvasPointFromEvent(e);
+  updateCropMarqueeOverlay(cropDragStart.x, cropDragStart.y, p.x, p.y);
+});
+document.addEventListener('mouseup', (e) => {
+  if (!cropMarqueeOn || !cropDragging || !cropDragStart) return;
+  cropDragging = false;
+  const p = canvasPointFromEvent(e);
+  const sx = Math.min(cropDragStart.x, p.x), sy = Math.min(cropDragStart.y, p.y);
+  const sw = Math.abs(p.x - cropDragStart.x), sh = Math.abs(p.y - cropDragStart.y);
+  if (sw < 4 || sh < 4) { cropRectPx = null; cropMarqueeApplyBtn.disabled = true; cropMarqueeOverlay.classList.remove('show'); return; }
+  cropRectPx = { x: sx, y: sy, w: sw, h: sh };
+  cropMarqueeApplyBtn.disabled = false;
+});
+
+cropMarqueeApplyBtn.addEventListener('click', () => {
+  if (!cropRectPx) return;
+  applyCropToSource(cropRectPx.x, cropRectPx.y, cropRectPx.w, cropRectPx.h);
+  disableCropMarquee();
+});
+cropMarqueeCancelBtn.addEventListener('click', () => disableCropMarquee());
+
 function loadImageFile(file){
+  // Percentage: reading the file is measured for real (0-70%); decoding and building the canvas
+  // can't be measured, so they step through 75% -> 90% -> done.
+  const task = GSBusy.task('Loading image');
   const img = new Image();
   const reader = new FileReader();
+  reader.onprogress = e => { if (e.lengthComputable) task.progress(0.7 * e.loaded / e.total); };
   reader.onload = e => {
+    task.progress(0.75);
     img.onload = () => {
-      canvas.width = img.naturalWidth;
-      canvas.height = img.naturalHeight;
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-      ctx.drawImage(img, 0, 0);
-      originalImageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-      // Untouched backup for the Restore brush and "Reset All Touch-ups" — captured once here,
-      // never mutated afterward, unlike originalImageData which the brush paints into directly.
-      pristineImageData = new ImageData(new Uint8ClampedArray(originalImageData.data), originalImageData.width, originalImageData.height);
-      ensurePristineCanvas();
-      brushUndoStack = [];
-      // A new image gets a fresh palette with different colors in a different order — any
-      // per-color overrides from the previous image would silently apply to the wrong colors.
-      colorOverrides = {};
-      selectedColorIndex = null;
-      pinnedPalette = null;
-      colorOverridePanel.style.display = 'none';
-      stage.classList.add('on');
-      dimsEl.textContent = canvas.width + ' × ' + canvas.height;
-      setView(false);
-      fitZoomToContainer();
-      autoFixPending = true;
-      autoFixMessage = '';
-      colorCountAutoPendingByMode = { color: true, greyscale: true };
-      // No auto-trace on load anymore — pick a mode, then click Vectorize. These one-shot flags
-      // stay armed regardless, so whichever mode is active when Vectorize is finally clicked still
-      // gets its correct first-look auto-detect.
+      task.progress(0.9);
+      // Let the pill repaint at 90% before the heavy synchronous canvas work blocks the page.
+      requestAnimationFrame(() => setTimeout(() => { try { applyNewCanvasImage(img); } finally { task.finish(); } }, 0));
     };
+    img.onerror = () => task.finish();
     img.src = e.target.result;
   };
+  reader.onerror = () => task.finish();
   reader.readAsDataURL(file);
 }
+
+document.getElementById('applyUpscale').addEventListener('click', async (e) => {
+  const btn = e.target;
+  if (!window.graphicSuite || !window.graphicSuite.upscaleImage) {
+    alert('AI upscaling is only available inside the desktop app.');
+    return;
+  }
+  if (!originalImageData) return;
+  if (btn.dataset.done && !(await gsAskProceed('Upscale again?', 'This picture has already been upscaled. Upscaling again processes it a second time and makes it bigger still.'))) return;
+
+  const scale = parseInt(document.getElementById('upscaleFactor').value);
+  const model = document.querySelector('input[name="upscaleModel"]:checked').value;
+
+  btn.disabled = true;
+  btn.classList.add('busy');
+  const originalText = btn.textContent;
+  btn.textContent = 'Starting…';
+  GSBusy.start('Upscaling with AI — this can take a minute…', true);
+
+  let unsubscribe = null;
+  try {
+    unsubscribe = window.graphicSuite.onUpscaleProgress((data) => {
+      btn.textContent = `${data.stage.replace(/…$/, '')} ${Math.round(data.percent || 0)}%`;
+      GSBusy.setLabel(`Upscaling — ${Math.round(data.percent || 0)}%`);
+    });
+
+    // Upscales whatever's currently on the canvas — the freshly loaded
+    // source, since this runs before any trace — not a stale copy.
+    const sourceDataUrl = canvas.toDataURL('image/png');
+    const result = await window.graphicSuite.upscaleImage({ imageDataUrl: sourceDataUrl, scale, model });
+
+    const resultImg = await new Promise((resolve, reject) => {
+      const el = new Image();
+      el.onload = () => resolve(el);
+      el.onerror = () => reject(new Error('Could not load the upscaled result'));
+      el.src = result.dataUrl;
+    });
+
+    // 6x/8x's last-mile adjustment (see the standalone Upscale tool's
+    // main.ts comment for why this never goes through the AI engine
+    // itself) is done here rather than a separate step, since the result
+    // is about to be redrawn into the working canvas anyway.
+    const factor = result.finalResizeFactor || 1;
+    const targetW = Math.round(resultImg.naturalWidth * factor);
+    const targetH = Math.round(resultImg.naturalHeight * factor);
+    const highResCanvas = document.createElement('canvas');
+    highResCanvas.width = targetW;
+    highResCanvas.height = targetH;
+    const hrCtx = highResCanvas.getContext('2d');
+    hrCtx.imageSmoothingEnabled = true;
+    hrCtx.imageSmoothingQuality = 'high';
+    hrCtx.drawImage(resultImg, 0, 0, targetW, targetH);
+
+    // Same "this is now THE image" reset loadImageFile uses — every trace/
+    // touch-up/palette setting downstream needs to start fresh against the
+    // new (much bigger) pixel data, exactly as if this had been the file
+    // opened in the first place.
+    applyNewCanvasImage(highResCanvas);
+
+    // Nothing is locked. The button just turns green and says Done; running the upscale again asks Yes / No first
+    // (4x of an already-4x'd image is 16x). Loading a new picture or Start Over puts it back to normal.
+    btn.disabled = false;
+    btn.classList.remove('busy');
+    btn.classList.add('done-state');
+    btn.dataset.done = '1';
+    btn.textContent = '✓ Done';
+  } catch (err) {
+    console.error(err);
+    btn.textContent = originalText;
+    btn.disabled = false;
+    btn.classList.remove('busy');
+    alert(`Upscale failed: ${err && err.message ? err.message : err}. If this keeps happening, try updating your graphics drivers.`);
+  } finally {
+    if (unsubscribe) unsubscribe();
+    GSBusy.stop();
+  }
+});
 
 drop.addEventListener('click', () => fileInput.click());
 fileInput.addEventListener('change', () => { if (fileInput.files[0]) loadImageFile(fileInput.files[0]); });
@@ -1148,6 +1726,8 @@ document.getElementById('reset').addEventListener('click', () => {
   brushUndoStack = [];
   brushModeSelect.value = 'off';
   brushModeSelect.dispatchEvent(new Event('change'));
+  disableCropMarquee();
+  vpTrimStatus.textContent = '';
   lastSvgString = '';
   lastPalette = [];
   autoFixPending = false;
@@ -1163,7 +1743,18 @@ document.getElementById('reset').addEventListener('click', () => {
   svgHolder.innerHTML = '';
   swatchList.innerHTML = '<span class="swatch-empty">Trace an image to see colors</span>';
   paletteBlock.style.display = 'none';
+  clearUpscaleDone();
 });
+
+// Puts the Upscale button back to normal (used by Start Over, and whenever a new picture becomes the working image).
+function clearUpscaleDone() {
+  const upscaleBtn = document.getElementById('applyUpscale');
+  if (!upscaleBtn) return;
+  upscaleBtn.disabled = false;
+  upscaleBtn.classList.remove('busy', 'done-state');
+  delete upscaleBtn.dataset.done;
+  upscaleBtn.textContent = 'Execute HD Upscale';
+}
 
 const paletteBlockTitle = document.getElementById('paletteBlockTitle');
 const colorCountLabel = document.getElementById('colorCountLabel');
@@ -1449,7 +2040,7 @@ function otsuThreshold(hist, total){
 // chasing continuous shading variation. Standard technique, reusing the same flat-pixel sampling
 // already used for the real palette (kMeansPalette) so it's not distracted by anti-aliased edges.
 function estimateTrueColorCount(imgData, maxK){
-  let samples = sampleFlatPixels(imgData, Math.max(1, Math.round(Math.sqrt((imgData.width * imgData.height) / 40000))), 2, 12);
+  let samples = sampleFlatPixels(imgData, Math.max(1, Math.round(Math.sqrt((imgData.width * imgData.height) / 40000))), 2);
   if (samples.length < 50) {
     samples = [];
     const { data, width, height } = imgData;
@@ -1992,15 +2583,46 @@ function smoothImageData(imgData, radiusPx){
 // harmlessly duplicate a real color), while still finding every genuinely small distinct color
 // correctly (verified against the uneven-region test from the original bug: 6→6 ... 9→9, then
 // correctly plateaus at 9 — the true color count — instead of ever fabricating a 10th).
-function sampleFlatPixels(imgData, step, checkDist, threshold){
+//
+// REAL BUG, found and fixed here (confirmed by scripting a synthetic repro of a photographed
+// embroidered patch — satin-stitch thread rendered with per-pixel highlight/shadow noise on top
+// of each real color, exactly like the "HMS Hermes"-style badge report): the flatness test above
+// used to compare neighbors by raw RGB distance (threshold 12) — fine for crisp flat vector art,
+// where two adjacent interior pixels of the same fill are near-identical, but nowhere near
+// tolerant enough for thread texture, where adjacent pixels of the SAME real color routinely swing
+// 40-100+ RGB levels from stitch-direction sheen. Almost every foreground pixel failed that test,
+// starving the sample set below the k*20 floor in kMeansPalette and silently triggering the fully
+// UNFILTERED fallback — every highlight/shadow/blend pixel included. Farthest-point k-means
+// seeding on that set then picks near-white and near-black extremes as its first centroids (their
+// RGB distance, ~442, beats the distance between almost any two real hues), so every additional
+// requested color just splits the brightness axis into more shades of grey instead of ever
+// reaching gold/tan/red — exactly the "adding colors only adds more grey" symptom. Fix: judge
+// flatness the same tolerant way countExactFlatColors already does (hue within 25 degrees, or
+// value within 60 when the pixel is too desaturated for hue to mean anything) instead of a strict
+// RGB distance. A slow gradient's per-step hue drift is far smaller than 25 degrees so smooth-
+// shaded art keeps working exactly as before; thread-texture's large per-pixel brightness jumps
+// now pass as long as the underlying hue holds, so real mid-tone samples of every true color
+// survive to seed k-means instead of being swallowed by the unfiltered white/black fallback.
+const FLAT_SAT_THRESHOLD = 0.18;
+const FLAT_HUE_TOL_DEG = 25;
+const FLAT_VALUE_TOL_RGB = 60;
+function isFlatNeighborHSV(h, s, v, nh, ns, nv){
+  const aAchromatic = s < FLAT_SAT_THRESHOLD;
+  const bAchromatic = ns < FLAT_SAT_THRESHOLD;
+  if (aAchromatic !== bAchromatic) return false;
+  if (aAchromatic) return Math.abs(v - nv) <= FLAT_VALUE_TOL_RGB;
+  const d = Math.abs(h - nh);
+  return Math.min(d, 360 - d) <= FLAT_HUE_TOL_DEG;
+}
+function sampleFlatPixels(imgData, step, checkDist){
   const { data, width, height } = imgData;
   const samples = [];
-  const thr2 = threshold * threshold;
   for (let y = 0; y < height; y += step){
     for (let x = 0; x < width; x += step){
       const i = (y * width + x) * 4;
       if (data[i + 3] < 10) continue;
       const r = data[i], g = data[i + 1], b = data[i + 2];
+      const [h, s, v] = rgbToHsv(r, g, b);
       let flat = true;
       const offsets = [[-checkDist, 0], [checkDist, 0], [0, -checkDist], [0, checkDist]];
       for (const [dx, dy] of offsets){
@@ -2008,8 +2630,8 @@ function sampleFlatPixels(imgData, step, checkDist, threshold){
         if (nx < 0 || nx >= width || ny < 0 || ny >= height) continue;
         const ni = (ny * width + nx) * 4;
         if (data[ni + 3] < 10){ flat = false; break; }
-        const dr = data[ni] - r, dg = data[ni + 1] - g, db = data[ni + 2] - b;
-        if (dr * dr + dg * dg + db * db > thr2){ flat = false; break; }
+        const [nh, ns, nv] = rgbToHsv(data[ni], data[ni + 1], data[ni + 2]);
+        if (!isFlatNeighborHSV(h, s, v, nh, ns, nv)){ flat = false; break; }
       }
       if (flat) samples.push([r, g, b]);
     }
@@ -2028,7 +2650,7 @@ function kMeansPalette(imgData, k, iterations){
   // fallback below on exactly the detailed images that need the flat filter most — reintroducing
   // the anti-aliasing-noise-in-clustering problem (fragmented/speckled paths) the filter exists to
   // prevent, confirmed as the "grey scaling bugs on detailed images" report.
-  let samples = sampleFlatPixels(imgData, step, 2, 12);
+  let samples = sampleFlatPixels(imgData, step, 2);
   // A busy/photographic image (lots of gradients, few truly flat regions) can starve the flat-
   // pixel filter down to almost nothing — fall back to unfiltered sampling rather than
   // clustering on a near-empty set in that case.
@@ -2288,6 +2910,7 @@ function runTrace(){
   const myGeneration = ++traceGeneration;
   traceStatus.textContent = 'Tracing…';
   processingOverlay.classList.add('show');
+  GSBusy.start('Tracing vector… (large images can take a moment)', true);
 
   // setTimeout, not requestAnimationFrame — rAF is fully paused on a backgrounded/inactive tab,
   // which would leave a trace started right before a tab-switch stuck at "Tracing…" forever.
@@ -2590,6 +3213,7 @@ function runTrace(){
         processingOverlay.classList.remove('show');
         needsRetrace = false;
       }
+      GSBusy.stop();
       resolve();
     }
   }); });
@@ -2637,13 +3261,19 @@ async function ensureFreshTrace(){
   if (needsRetrace) { clearTimeout(traceTimeout); await runTrace(); }
 }
 
+function ensureExtension(name, ext) {
+  return name.toLowerCase().endsWith('.' + ext) ? name : `${name}.${ext}`;
+}
+
 document.getElementById('downloadSvg').addEventListener('click', async () => {
   await ensureFreshTrace();
   if (!lastSvgString) return;
+  const name = await promptForFileName('vector-prep-trace', { label: 'Download SVG as:', confirmText: 'Download' });
+  if (!name) return;
   const blob = new Blob([lastSvgString], { type: 'image/svg+xml' });
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
-  a.download = 'vector-prep-trace.svg';
+  a.download = ensureExtension(name, 'svg');
   a.click();
   URL.revokeObjectURL(a.href);
 });
@@ -2651,6 +3281,8 @@ document.getElementById('downloadSvg').addEventListener('click', async () => {
 document.getElementById('downloadPng').addEventListener('click', async () => {
   await ensureFreshTrace();
   if (!lastSvgString) return;
+  const name = await promptForFileName('vector-prep-preview', { label: 'Download PNG as:', confirmText: 'Download' });
+  if (!name) return;
   const svgBlob = new Blob([lastSvgString], { type: 'image/svg+xml' });
   const url = URL.createObjectURL(svgBlob);
   const img = new Image();
@@ -2663,7 +3295,7 @@ document.getElementById('downloadPng').addEventListener('click', async () => {
     off.toBlob(blob => {
       const a = document.createElement('a');
       a.href = URL.createObjectURL(blob);
-      a.download = 'vector-prep-preview.png';
+      a.download = ensureExtension(name, 'png');
       a.click();
       URL.revokeObjectURL(a.href);
       URL.revokeObjectURL(url);
@@ -3131,6 +3763,538 @@ document.getElementById('brushResetAll').addEventListener('click', () => {
 });
 
 modeSelect.dispatchEvent(new Event('change'));
+
+// --- Icon-rail popout panels ---------------------------------------------
+// Purely a display layer on top of the existing tool-blocks: nothing here
+// touches any of their inputs, IDs, or the functions wired to them above —
+// it only shows/hides the panel and toggles which rail button looks active.
+(function () {
+  const railButtons = document.querySelectorAll('.rail-btn');
+  const panels = document.querySelectorAll('.tool-popout');
+
+  function closeAll() {
+    panels.forEach((p) => p.classList.remove('open'));
+    railButtons.forEach((b) => b.classList.remove('active'));
+    document.body.classList.remove('panel-open');
+  }
+
+  // Panels default to vertically centered on the preview/canvas area,
+  // docked to the right — not a fixed top:24px corner. Tracked separately
+  // from a user's own drag so re-centering on every open doesn't fight a
+  // position someone deliberately chose.
+  const manuallyPositioned = new Set();
+
+  function centerPopoutOnPreview(panel) {
+    const previewHolder = document.getElementById('previewHolder');
+    const reference = previewHolder || document.querySelector('.canvas-panel') || document.body;
+    const refRect = reference.getBoundingClientRect();
+    const targetCenterY = refRect.top + refRect.height / 2;
+
+    panel.style.left = '';
+    panel.style.right = '24px';
+    // Needs to already be visible (display:block, via the .open class) to
+    // measure its own height — this runs after that class is added.
+    const panelHeight = panel.getBoundingClientRect().height;
+    const maxTop = Math.max(0, window.innerHeight - panelHeight - 12);
+    const top = Math.min(Math.max(12, targetCenterY - panelHeight / 2), maxTop);
+    panel.style.top = top + 'px';
+  }
+
+  // Dragging/resizing sets inline left/top/width/height on a panel, which
+  // otherwise persists for the rest of the session — fine while actively
+  // working, but every panel should snap back to centered-on-preview,
+  // docked-right on a fresh image load or Start Over, rather than staying
+  // wherever it was last left (and forgetting it was ever manually moved).
+  function resetPopoutPositions() {
+    manuallyPositioned.clear();
+    panels.forEach((p) => {
+      p.style.left = '';
+      p.style.top = '';
+      p.style.right = '';
+      p.style.width = '';
+      p.style.height = '';
+      p.style.maxHeight = '';
+    });
+  }
+  window.__resetPopoutPositions = resetPopoutPositions;
+
+  railButtons.forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const panel = document.getElementById(btn.dataset.panel);
+      const alreadyOpen = panel.classList.contains('open');
+      closeAll();
+      if (!alreadyOpen) {
+        panel.classList.add('open');
+        btn.classList.add('active');
+        document.body.classList.add('panel-open');
+        if (!manuallyPositioned.has(panel.id)) centerPopoutOnPreview(panel);
+      }
+    });
+  });
+
+  panels.forEach((panel) => {
+    const closeBtn = panel.querySelector('[data-close]');
+    if (closeBtn) closeBtn.addEventListener('click', closeAll);
+
+    // Drag by the header (h3) to move the panel anywhere on screen instead
+    // of it being locked to the top-right corner. Switches from the
+    // stylesheet's right:24px anchor to explicit left/top once dragged,
+    // and stays clamped inside the viewport so it can never be dragged
+    // somewhere unreachable.
+    //
+    // Move/up listen on the whole document, not the header itself — the
+    // header is only ~21px tall, and a real drag gesture's cursor drifts
+    // off a strip that thin constantly, which is what made the first
+    // version feel jumpy (movement only tracked while the mouse happened
+    // to still be directly over the header).
+    const header = panel.querySelector('h3');
+    if (!header) return;
+    let dragging = false;
+    let startX = 0, startY = 0, startLeft = 0, startTop = 0;
+
+    header.addEventListener('pointerdown', (e) => {
+      if (e.target.closest('[data-close]')) return;
+      dragging = true;
+      const rect = panel.getBoundingClientRect();
+      startX = e.clientX;
+      startY = e.clientY;
+      startLeft = rect.left;
+      startTop = rect.top;
+      panel.style.right = 'auto';
+    });
+
+    document.addEventListener('pointermove', (e) => {
+      if (!dragging) return;
+      manuallyPositioned.add(panel.id); // a real drag happened — stop auto-centering this one
+      const rect = panel.getBoundingClientRect();
+      const maxLeft = window.innerWidth - rect.width;
+      const maxTop = window.innerHeight - rect.height;
+      const newLeft = Math.min(Math.max(0, startLeft + (e.clientX - startX)), Math.max(0, maxLeft));
+      const newTop = Math.min(Math.max(0, startTop + (e.clientY - startY)), Math.max(0, maxTop));
+      panel.style.left = newLeft + 'px';
+      panel.style.top = newTop + 'px';
+    });
+
+    document.addEventListener('pointerup', () => { dragging = false; });
+
+    // Resize via a corner handle, dragged from the bottom-right — same
+    // document-level move/up pattern as the drag-to-move above, for the
+    // same reason (a tiny 15px handle is even easier for the cursor to
+    // drift off mid-gesture than the header was).
+    const resizeHandle = document.createElement('div');
+    resizeHandle.className = 'popout-resize-handle';
+    resizeHandle.title = 'Drag to resize';
+    resizeHandle.innerHTML = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M14 3 3 14M14 8 8 14M14 13l-1 1"/></svg>';
+    panel.appendChild(resizeHandle);
+
+    let resizing = false;
+    let resizeStartX = 0, resizeStartY = 0, resizeStartW = 0, resizeStartH = 0;
+
+    resizeHandle.addEventListener('pointerdown', (e) => {
+      e.stopPropagation(); // don't also trigger the header's drag-to-move
+      resizing = true;
+      const rect = panel.getBoundingClientRect();
+      resizeStartX = e.clientX;
+      resizeStartY = e.clientY;
+      resizeStartW = rect.width;
+      resizeStartH = rect.height;
+      panel.style.maxHeight = 'none'; // manual height now takes over from the default cap
+    });
+
+    document.addEventListener('pointermove', (e) => {
+      if (!resizing) return;
+      const rect = panel.getBoundingClientRect();
+      const maxW = window.innerWidth - rect.left;
+      const maxH = window.innerHeight - rect.top;
+      const newW = Math.min(Math.max(220, resizeStartW + (e.clientX - resizeStartX)), maxW);
+      const newH = Math.min(Math.max(120, resizeStartH + (e.clientY - resizeStartY)), maxH);
+      panel.style.width = newW + 'px';
+      panel.style.height = newH + 'px';
+    });
+
+    document.addEventListener('pointerup', () => { resizing = false; });
+  });
+
+  // Trace mode is the natural first stop after loading an image, so open
+  // it by default rather than leaving the user looking at a bare canvas
+  // with no indication of where to go next. Exposed on window so the
+  // loadImageFile wrapper below can call it again on every subsequent
+  // image load too, not just this initial page-load call.
+  function openTracePanelByDefault() {
+    closeAll();
+    resetPopoutPositions();
+    const tracePanel = document.getElementById('panel-trace');
+    tracePanel.classList.add('open');
+    document.querySelector('.rail-btn[data-panel="panel-trace"]').classList.add('active');
+    document.body.classList.add('panel-open');
+    centerPopoutOnPreview(tracePanel);
+  }
+  window.__openTracePanelByDefault = openTracePanelByDefault;
+  // No unconditional call here at parse time — nothing is visible to
+  // center against yet (.stage is still display:none, so previewHolder
+  // and the panel itself both measure as zero-sized). The loadImageFile
+  // wrapper below runs this once the stage is actually visible instead,
+  // which also covers the very first load, not just subsequent ones.
+
+  // Start Over is a second reset path distinct from loading a new image
+  // (it clears the current one rather than replacing it) — an additional
+  // listener alongside the button's own existing one, not a replacement,
+  // so its original erase-everything behavior is untouched.
+  const resetBtn = document.getElementById('reset');
+  if (resetBtn) resetBtn.addEventListener('click', openTracePanelByDefault);
+})();
+
+// Re-open Trace mode (closing whatever else was open) every time a new
+// image loads, not just the very first one — otherwise loading a second
+// image while, say, the Export panel was left open from the previous one
+// would leave the user looking at Export controls for an image they
+// haven't traced yet. loadImageFile is a plain top-level function
+// declaration, so it's genuinely global here (this is a classic script,
+// not a module) — wrapping it after the fact doesn't touch its original
+// body at all.
+(function () {
+  const originalLoadImageFile = window.loadImageFile;
+
+  // loadImageFile kicks off a FileReader -> Image.onload chain and returns
+  // long before that finishes — .stage only actually gets its 'on' class
+  // (and previewHolder/the panel only get real, non-zero layout) once that
+  // async chain completes. Calling the reopen-and-center logic right after
+  // loadImageFile() *returns* was computing against zero-sized elements,
+  // which is why panels kept landing at a wrong/stale position instead of
+  // truly centering. Poll via rAF for the stage to actually be visible
+  // with real size instead of guessing a delay.
+  function waitForStageVisible(callback, framesLeft) {
+    if (framesLeft === undefined) framesLeft = 120; // ~2s at 60fps before giving up
+    const stageEl = document.getElementById('stage');
+    if (stageEl.classList.contains('on') && stageEl.getBoundingClientRect().height > 0) {
+      callback();
+      return;
+    }
+    if (framesLeft <= 0) return; // give up quietly rather than loop forever on a real error
+    requestAnimationFrame(() => waitForStageVisible(callback, framesLeft - 1));
+  }
+
+  window.loadImageFile = function (...args) {
+    const result = originalLoadImageFile.apply(this, args);
+    waitForStageVisible(() => {
+      if (window.__openTracePanelByDefault) window.__openTracePanelByDefault();
+    });
+    return result;
+  };
+})();
+
+// --- Save to Suite ---------------------------------------------------------
+// window.graphicSuite only exists when this page is running inside Graphic
+// Suite's own BrowserView (exposed by toolPreload.cjs) — opened as a plain
+// file in a regular browser, it's simply undefined, so the button stays
+// hidden and nothing here runs. Keeps this a faithful standalone copy too.
+function promptForFileName(defaultName, opts) {
+  opts = opts || {};
+  const labelText = opts.label || 'Save as:';
+  const confirmText = opts.confirmText || 'Save';
+  return new Promise((resolve) => {
+    const overlay = document.createElement('div');
+    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.55);z-index:9999;display:flex;align-items:center;justify-content:center;font-family:Arial,sans-serif;';
+
+    const box = document.createElement('div');
+    box.style.cssText = 'background:var(--white);border:1px solid var(--field-border);padding:20px;width:340px;max-width:90vw;box-shadow:0 8px 24px rgba(0,0,0,0.4);';
+
+    const label = document.createElement('div');
+    label.textContent = labelText;
+    label.style.cssText = "font-family:'Consolas',monospace;font-size:12px;font-weight:500;color:var(--ink);margin-bottom:8px;";
+
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.value = defaultName;
+    input.style.cssText = "width:100%;box-sizing:border-box;font-family:'Consolas',monospace;font-size:13px;padding:8px;border:1px solid var(--field-border);background:transparent;color:var(--ink);margin-bottom:14px;";
+
+    // Folder picker: only rendered when the caller passes a `folders` array (Save to Gallery)
+    // — the plain browser Download buttons have no concept of an app-managed folder, so they
+    // never pass this and get the original name-only dialog.
+    let folderSelect = null;
+    let customerSelect = null;
+    let newFolderInput = null;
+    const folderFields = [];
+    if (Array.isArray(opts.folders)) {
+      const folderLabel = document.createElement('div');
+      folderLabel.textContent = 'Save into:';
+      folderLabel.style.cssText = "font-family:'Consolas',monospace;font-size:12px;font-weight:500;color:var(--ink);margin-bottom:8px;";
+
+      folderSelect = document.createElement('select');
+      folderSelect.style.cssText = "width:100%;box-sizing:border-box;font-family:'Consolas',monospace;font-size:13px;padding:8px;border:1px solid var(--field-border);background:var(--white);color:var(--ink);margin-bottom:10px;";
+      const rootOption = document.createElement('option');
+      rootOption.value = '';
+      rootOption.textContent = '(Top level)';
+      folderSelect.appendChild(rootOption);
+      opts.folders.forEach((f) => {
+        const o = document.createElement('option');
+        o.value = f;
+        o.textContent = f;
+        folderSelect.appendChild(o);
+      });
+      const newOption = document.createElement('option');
+      newOption.value = '__new__';
+      newOption.textContent = '+ New folder…';
+      folderSelect.appendChild(newOption);
+      if (opts.defaultFolder && opts.folders.includes(opts.defaultFolder)) {
+        folderSelect.value = opts.defaultFolder;
+      }
+
+      newFolderInput = document.createElement('input');
+      newFolderInput.type = 'text';
+      newFolderInput.placeholder = 'New folder name';
+      newFolderInput.style.cssText = "width:100%;box-sizing:border-box;font-family:'Consolas',monospace;font-size:13px;padding:8px;border:1px solid var(--field-border);background:transparent;color:var(--ink);margin-bottom:10px;display:none;";
+      folderSelect.addEventListener('change', () => {
+        const isNew = folderSelect.value === '__new__';
+        newFolderInput.style.display = isNew ? '' : 'none';
+        if (isNew) newFolderInput.focus();
+      });
+
+      folderFields.push(folderLabel, folderSelect, newFolderInput);
+    }
+
+    // "For customer": only offered when the host app has a customer directory and passes it in
+    // (Graphical Magic). Any other host passes no customers, so this dialog is unchanged there.
+    if (Array.isArray(opts.customers) && opts.customers.length) {
+      const customerLabel = document.createElement('div');
+      customerLabel.textContent = 'For customer:';
+      customerLabel.style.cssText = "font-family:'Consolas',monospace;font-size:12px;font-weight:500;color:var(--ink);margin-bottom:8px;";
+
+      customerSelect = document.createElement('select');
+      customerSelect.style.cssText = "width:100%;box-sizing:border-box;font-family:'Consolas',monospace;font-size:13px;padding:8px;border:1px solid var(--field-border);background:var(--white);color:var(--ink);margin-bottom:10px;";
+      const noCustomer = document.createElement('option');
+      noCustomer.value = '';
+      noCustomer.textContent = '(No customer)';
+      customerSelect.appendChild(noCustomer);
+      opts.customers.forEach((c) => {
+        const o = document.createElement('option');
+        o.value = c.id;
+        o.textContent = c.company ? c.name + ' — ' + c.company : c.name;
+        customerSelect.appendChild(o);
+      });
+      folderFields.push(customerLabel, customerSelect);
+    }
+
+    const btnRow = document.createElement('div');
+    btnRow.style.cssText = 'display:flex;justify-content:flex-end;gap:8px;';
+
+    const cancelBtn = document.createElement('button');
+    cancelBtn.type = 'button';
+    cancelBtn.textContent = 'Cancel';
+    cancelBtn.className = 'ghost';
+    cancelBtn.style.cssText = 'padding:8px 14px;border:1px solid var(--ink);background:transparent;color:var(--ink);cursor:pointer;';
+
+    const confirmBtn = document.createElement('button');
+    confirmBtn.type = 'button';
+    confirmBtn.textContent = confirmText;
+    confirmBtn.style.cssText = 'padding:8px 14px;border:1px solid var(--ink);background:var(--ink);color:var(--white);cursor:pointer;';
+
+    function resolveFolder() {
+      if (!folderSelect) return undefined;
+      if (folderSelect.value === '__new__') {
+        return newFolderInput.value.trim();
+      }
+      return folderSelect.value;
+    }
+    function buildResult() {
+      const name = input.value.trim() || defaultName;
+      return folderSelect ? { name, folder: resolveFolder(), customerId: customerSelect ? customerSelect.value : '' } : name;
+    }
+    function close(result) {
+      document.removeEventListener('keydown', onKeydown);
+      overlay.remove();
+      resolve(result);
+    }
+    function onKeydown(e) {
+      if (e.key === 'Enter') { e.preventDefault(); close(buildResult()); }
+      if (e.key === 'Escape') { e.preventDefault(); close(null); }
+    }
+
+    cancelBtn.addEventListener('click', () => close(null));
+    confirmBtn.addEventListener('click', () => close(buildResult()));
+    document.addEventListener('keydown', onKeydown);
+
+    btnRow.append(cancelBtn, confirmBtn);
+    box.append(label, input, ...folderFields, btnRow);
+    overlay.append(box);
+    document.body.append(overlay);
+    input.focus();
+    input.select();
+  });
+}
+
+if (window.graphicSuite) {
+  const saveBtn = document.getElementById('saveToSuite');
+  saveBtn.style.display = '';
+  saveBtn.addEventListener('click', async () => {
+    await ensureFreshTrace();
+    if (!lastSvgString) return;
+    // Preselect a folder literally named (any case) "Vectors" if the user already made one —
+    // e.g. by hand in Explorer via Settings' "Open Current Folder" — so saves land there by
+    // default without forcing every image into a fixed, uneditable subfolder.
+    const folders = window.graphicSuite.listGalleryFolders ? await window.graphicSuite.listGalleryFolders() : [];
+    // Only Graphical Magic provides a customer directory; elsewhere this is simply empty.
+    const customers = window.graphicSuite.listCustomers ? await window.graphicSuite.listCustomers() : [];
+    const defaultFolder = folders.find((f) => f.toLowerCase() === 'vectors');
+    const result = await promptForFileName(`Vector trace ${new Date().toLocaleString()}`, {
+      label: 'Save to Gallery as:',
+      confirmText: 'Save',
+      folders,
+      defaultFolder,
+      customers,
+    });
+    if (!result) return;
+    const { name, folder, customerId } = result;
+    if (!name) return;
+    saveBtn.disabled = true;
+    const originalText = saveBtn.textContent;
+    saveBtn.textContent = 'Saving…';
+    try {
+      await window.graphicSuite.saveToGallery({
+        tool: 'vector-prep',
+        title: name,
+        format: 'svg',
+        content: lastSvgString,
+        folder,
+        customerId: customerId || undefined,
+      });
+      saveBtn.textContent = '✓ Image Saved';
+      saveBtn.style.background = '#2e7d32';
+      saveBtn.style.color = '#fff';
+      saveBtn.style.borderColor = '#2e7d32';
+      setTimeout(() => {
+        saveBtn.textContent = originalText;
+        saveBtn.style.background = '';
+        saveBtn.style.color = '';
+        saveBtn.style.borderColor = '';
+      }, 10000);
+    } catch (err) {
+      saveBtn.textContent = 'Save failed';
+      setTimeout(() => { saveBtn.textContent = originalText; }, 2000);
+    } finally {
+      saveBtn.disabled = false;
+    }
+  });
+}
+// Asks Yes / No before doing something a second time. Resolves true for Yes, false for No (or Esc). Keys: Y = yes, N = no.
+function gsAskProceed(titleText, messageText) {
+  return new Promise((resolve) => {
+    const overlay = document.createElement('div');
+    overlay.setAttribute('data-gs-dialog', '1');
+    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.55);z-index:9999;display:flex;align-items:center;justify-content:center;font-family:Arial,sans-serif;';
+    const box = document.createElement('div');
+    box.style.cssText = 'background:var(--white);border:1px solid var(--field-border);padding:24px;width:400px;max-width:90vw;box-shadow:0 8px 24px rgba(0,0,0,0.4);text-align:center;';
+    const title = document.createElement('div');
+    title.textContent = titleText;
+    title.style.cssText = 'font-size:17px;font-weight:700;color:var(--ink);margin-bottom:8px;';
+    const msg = document.createElement('div');
+    msg.textContent = messageText;
+    msg.style.cssText = 'font-size:14px;color:var(--ink);margin-bottom:18px;line-height:1.4;';
+    const row = document.createElement('div');
+    row.style.cssText = 'display:flex;gap:10px;justify-content:center;';
+    const mk = (label, primary) => {
+      const b = document.createElement('button');
+      b.type = 'button'; b.textContent = label;
+      b.style.cssText = 'flex:1;padding:11px 14px;border:1px solid var(--ink);cursor:pointer;font-size:15px;font-weight:700;' + (primary ? 'background:var(--ink);color:var(--white);' : 'background:transparent;color:var(--ink);');
+      return b;
+    };
+    const noBtn = mk('No', false), yesBtn = mk('Yes, run it again', true);
+    const finish = (v) => { document.removeEventListener('keydown', onKey, true); overlay.remove(); resolve(v); };
+    const onKey = (e) => {
+      const k = e.key.toLowerCase();
+      if (k === 'escape' || k === 'n') { e.preventDefault(); finish(false); }
+      else if (k === 'y') { e.preventDefault(); finish(true); }
+    };
+    noBtn.addEventListener('click', () => finish(false));
+    yesBtn.addEventListener('click', () => finish(true));
+    document.addEventListener('keydown', onKey, true);
+    row.append(noBtn, yesBtn);
+    box.append(title, msg, row);
+    overlay.append(box);
+    document.body.append(overlay);
+    noBtn.focus();
+  });
+}
+
+// After something is sent to the gang sheet: ask what to do next, so nobody is left wondering.
+// "Add next image" clears this screen for the next picture; "Go to the gang sheet" switches over to it. Esc just closes it.
+function gsSentDialog(count, onNext) {
+  const overlay = document.createElement('div');
+  overlay.setAttribute('data-gs-dialog', '1');
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.55);z-index:9999;display:flex;align-items:center;justify-content:center;font-family:Arial,sans-serif;';
+  const box = document.createElement('div');
+  box.style.cssText = 'background:var(--white);border:1px solid var(--field-border);padding:24px;width:400px;max-width:90vw;box-shadow:0 8px 24px rgba(0,0,0,0.4);text-align:center;';
+  const title = document.createElement('div');
+  title.textContent = '✓ Added to the gang sheet';
+  title.style.cssText = 'font-size:17px;font-weight:700;color:var(--ink);margin-bottom:6px;';
+  const msg = document.createElement('div');
+  msg.textContent = count === 1 ? 'There is 1 image on the gang sheet.' : 'There are ' + count + ' images on the gang sheet.';
+  msg.style.cssText = 'font-size:14px;color:var(--ink);margin-bottom:18px;';
+  const mk = (label, hint, primary) => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.style.cssText = 'display:block;width:100%;box-sizing:border-box;padding:12px 14px;margin-bottom:10px;border:1px solid var(--ink);cursor:pointer;text-align:center;' +
+      (primary ? 'background:var(--ink);color:var(--white);' : 'background:transparent;color:var(--ink);');
+    const l = document.createElement('div'); l.textContent = label; l.style.cssText = 'font-size:15px;font-weight:700;';
+    const h = document.createElement('div'); h.textContent = hint; h.style.cssText = 'font-size:12px;margin-top:3px;opacity:0.85;';
+    b.append(l, h);
+    return b;
+  };
+  const nextBtn = mk('Add next image', 'Clears this screen, ready for the next one', true);
+  const goBtn = mk('Go to the gang sheet →', 'See and arrange your images', false);
+  const close = () => { document.removeEventListener('keydown', onKey, true); overlay.remove(); };
+  const onKey = (e) => { if (e.key === 'Escape') { e.preventDefault(); close(); } };
+  nextBtn.addEventListener('click', () => { close(); onNext(); });
+  goBtn.addEventListener('click', () => { close(); window.graphicSuite.openGangSheets(); });
+  document.addEventListener('keydown', onKey, true);
+  box.append(title, msg, nextBtn, goBtn);
+  overlay.append(box);
+  document.body.append(overlay);
+  nextBtn.focus();
+}
+
+// Send the traced vector straight to the DTF Gang Sheet builder (only inside Crystal Suite / Graphical Magic). It is the same SVG
+// "Download SVG" makes, so it stays a true vector on the sheet, as if it had been downloaded and dragged in.
+if (window.graphicSuite && window.graphicSuite.sendToGangSheet) {
+  const sendBtn = document.getElementById('sendToGang');
+  sendBtn.style.display = '';
+  let sentCount = 0;
+  const svgDataUrl = (svg) => {
+    const bytes = new TextEncoder().encode(svg);
+    let bin = '';
+    for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+    return 'data:image/svg+xml;base64,' + btoa(bin);
+  };
+  sendBtn.addEventListener('click', async () => {
+    const originalText = sendBtn.textContent;
+    if (!originalImageData) {
+      sendBtn.textContent = 'Load a picture first';
+      setTimeout(() => { sendBtn.textContent = originalText; }, 2500);
+      return;
+    }
+    sendBtn.disabled = true;
+    try {
+      // Not vectorized yet? Do it now, with the current settings - the same as pressing Vectorize - so this button always works.
+      if (!lastSvgString) {
+        sendBtn.textContent = 'Vectorizing…';
+        document.getElementById('vectorizeBtn').click();
+        for (let i = 0; i < 900 && !lastSvgString; i++) await new Promise((r) => setTimeout(r, 100));
+      }
+      await ensureFreshTrace();
+      if (!lastSvgString) throw new Error('no trace');
+      sendBtn.textContent = 'Sending…';
+      sentCount += 1;
+      const r = await window.graphicSuite.sendToGangSheet({ name: 'Vector trace ' + sentCount, dataUrl: svgDataUrl(lastSvgString) });
+      sendBtn.textContent = originalText;
+      gsSentDialog(r.waiting, () => document.getElementById('reset').click()); // 'Add next image' = this page's Start Over
+    } catch (err) {
+      sendBtn.textContent = 'Couldn\'t send';
+      setTimeout(() => { sendBtn.textContent = originalText; }, 2500);
+    } finally {
+      sendBtn.disabled = false;
+    }
+  });
+}
 </script>
 </body>
 </html>
