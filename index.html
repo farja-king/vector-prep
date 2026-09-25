@@ -600,6 +600,14 @@
   button.action:hover{background:var(--thread-red); border-color:var(--thread-red);}
   button.action:active{transform:translateY(1px);}
   button.action:disabled{cursor:wait; opacity:0.8;}
+  /* Desktop-only lock (see lockPanelForDesktopOnly below): overrides the "processing" look above
+     with a clearly permanent, "you can't use this" appearance — not "please wait". Specificity
+     (.gm-locked ancestor) beats the plain button.action:disabled rule above on purpose. */
+  .gm-locked input:disabled, .gm-locked select:disabled, .gm-locked button:disabled{
+    cursor:not-allowed !important;
+    opacity:0.4 !important;
+    filter:grayscale(0.4);
+  }
   button.action.busy{
     background:linear-gradient(90deg, var(--ink) 0%, var(--thread-red) 50%, var(--ink) 100%);
     background-size:220% 100%;
@@ -851,6 +859,10 @@ html.gs-busy, html.gs-busy *{cursor:progress !important;}
         <div class="row" id="cropMarqueeActions" style="display:none; margin-top:8px;">
           <button class="action" id="cropMarqueeApply" style="flex:1;" disabled>Apply Crop</button>
           <button class="action ghost" id="cropMarqueeCancel" style="flex:1;">Cancel</button>
+        </div>
+        <div class="history-controls" style="margin-top:8px;">
+          <button class="action ghost history-back-btn" id="cropHistoryBack" style="flex:1;" disabled>← Undo</button>
+          <button class="action ghost history-redo-btn" id="cropHistoryRedo" style="flex:1;" disabled>Redo →</button>
         </div>
       </div>
 
@@ -1474,8 +1486,14 @@ document.addEventListener('mouseup', () => {
 // pristineImageData from it, and clear every piece of state that belonged
 // to whatever pixels were there before (palette overrides, brush undo
 // history, auto-detect flags).
-function applyNewCanvasImage(img){
+function applyNewCanvasImage(img, keepCropHistory){
   clearUpscaleDone();
+  // Crop's own undo/redo (added below) snapshots pixels+dimensions across calls to this same
+  // function, so a genuinely new picture (a fresh file, or a just-upscaled result at a new
+  // resolution) must clear that history — it would otherwise silently restore mismatched pixels
+  // for a totally different image. Crop's own two call sites pass keepCropHistory:true since they
+  // manage cropUndoSnapshot/cropRedoSnapshot explicitly around their own calls here.
+  if (!keepCropHistory) { cropUndoSnapshot = null; cropRedoSnapshot = null; if (typeof updateCropHistoryButtons === 'function') updateCropHistoryButtons(); }
   // Accepts either an <img> (naturalWidth/Height) or an already-sized
   // <canvas> (width/height) — the Upscale panel passes a canvas since it
   // needs an extra resize pass before this becomes the working image.
@@ -1537,6 +1555,32 @@ function disableCropMarquee(){
 }
 
 // sx/sy/sw/sh are native source-picture pixel coordinates.
+// Added per direct request: Crop had no undo/redo at all (unlike every other tool with a real
+// commit action), even though applyCropToSource funnels into applyNewCanvasImage — the same full
+// "this is now THE image" reset a fresh load does (canvas dims, originalImageData,
+// pristineImageData, brush history, palette overrides, all of it). A single-level undo/redo
+// snapshotting just the pixels+dimensions (not the full reset's other fields) is enough for the
+// realistic case, since Crop now sits BEFORE Trace in the rail order — nobody should have palette
+// overrides or touch-up strokes to lose yet at the point they're still cropping.
+let cropUndoSnapshot = null;
+let cropRedoSnapshot = null;
+function snapshotForCropHistory() {
+  return { data: new Uint8ClampedArray(originalImageData.data), width: canvas.width, height: canvas.height };
+}
+function updateCropHistoryButtons() {
+  const backBtn = document.getElementById('cropHistoryBack'), redoBtn = document.getElementById('cropHistoryRedo');
+  if (backBtn) backBtn.disabled = !cropUndoSnapshot;
+  if (redoBtn) redoBtn.disabled = !cropRedoSnapshot;
+}
+function restoreCropSnapshot(snap) {
+  const tmp = document.createElement('canvas');
+  tmp.width = snap.width; tmp.height = snap.height;
+  tmp.getContext('2d').putImageData(new ImageData(new Uint8ClampedArray(snap.data), snap.width, snap.height), 0, 0);
+  applyNewCanvasImage(tmp, true);
+  invalidateInFlightTrace();
+  updateCropHistoryButtons();
+}
+
 function applyCropToSource(sx, sy, sw, sh){
   sx = Math.max(0, Math.round(sx)); sy = Math.max(0, Math.round(sy));
   sw = Math.round(sw); sh = Math.round(sh);
@@ -1544,13 +1588,31 @@ function applyCropToSource(sx, sy, sw, sh){
   if (sw < 4 || sh < 4) return false; // too small to be a real crop
   if (sx === 0 && sy === 0 && sw === canvas.width && sh === canvas.height) return false; // no-op
 
+  cropUndoSnapshot = snapshotForCropHistory();
+  cropRedoSnapshot = null;
   const cropped = document.createElement('canvas');
   cropped.width = sw; cropped.height = sh;
   cropped.getContext('2d').drawImage(canvas, sx, sy, sw, sh, 0, 0, sw, sh);
-  applyNewCanvasImage(cropped);
+  applyNewCanvasImage(cropped, true);
   invalidateInFlightTrace(); // the old SVG (if any) no longer matches this picture
+  updateCropHistoryButtons();
   return true;
 }
+
+document.getElementById('cropHistoryBack').addEventListener('click', () => {
+  if (!cropUndoSnapshot) return;
+  cropRedoSnapshot = snapshotForCropHistory();
+  const toRestore = cropUndoSnapshot;
+  cropUndoSnapshot = null;
+  restoreCropSnapshot(toRestore);
+});
+document.getElementById('cropHistoryRedo').addEventListener('click', () => {
+  if (!cropRedoSnapshot) return;
+  cropUndoSnapshot = snapshotForCropHistory();
+  const toRestore = cropRedoSnapshot;
+  cropRedoSnapshot = null;
+  restoreCropSnapshot(toRestore);
+});
 
 trimToContentBtn.addEventListener('click', () => {
   if (!originalImageData) return;
@@ -1774,7 +1836,12 @@ document.getElementById('reset').addEventListener('click', () => {
 function clearUpscaleDone() {
   const upscaleBtn = document.getElementById('applyUpscale');
   if (!upscaleBtn) return;
-  upscaleBtn.disabled = false;
+  // Same bug already caught and fixed in Print Prep: this runs on every image load/crop (called
+  // from inside applyNewCanvasImage), and used to unconditionally re-enable this button — silently
+  // undoing the desktop-only lock on Upscale the moment a new picture landed, even though the
+  // panel still showed its red notice and everything else in it stayed correctly disabled.
+  const panel = upscaleBtn.closest('.gm-locked');
+  upscaleBtn.disabled = !!panel;
   upscaleBtn.classList.remove('busy', 'done-state');
   delete upscaleBtn.dataset.done;
   upscaleBtn.textContent = 'Execute HD Upscale';
@@ -3289,12 +3356,61 @@ function ensureExtension(name, ext) {
   return name.toLowerCase().endsWith('.' + ext) ? name : `${name}.${ext}`;
 }
 
+// This standalone site's export is a free preview, not the deliverable — matches the same small
+// bottom-right corner mark already shipped on Print Prep (printprep.click), just branded for this
+// site. window.graphicSuite only exists inside the paid desktop app, so this is always true here,
+// written as a real check in case this file is ever reused elsewhere.
+function svgExportWatermarkGroup(w, h) {
+  const big = Math.max(w, h);
+  const pad = Math.round(big * 0.018);
+  const fontSize = Math.max(11, Math.round(big * 0.022));
+  const label = 'vectorprep.click';
+  // No live DOM text measurement available for a string we're building outside any element —
+  // a generous per-character estimate for this specific bold sans-serif label keeps the chip
+  // comfortably wide regardless of the viewer's exact font substitution.
+  const textW = label.length * fontSize * 0.62;
+  const chipW = textW + pad * 2, chipH = fontSize + pad * 1.4;
+  const chipX = w - chipW - pad, chipY = h - chipH - pad;
+  const r = chipH * 0.25;
+  return `<g><rect x="${chipX}" y="${chipY}" width="${chipW}" height="${chipH}" rx="${r}" fill="rgba(0,0,0,0.55)"/><text x="${chipX + chipW / 2}" y="${chipY + chipH / 2 + fontSize * 0.32}" font-family="Arial, sans-serif" font-weight="600" font-size="${fontSize}" fill="rgba(255,255,255,0.92)" text-anchor="middle">${label}</text></g>`;
+}
+function drawPngExportWatermark(wctx, w, h) {
+  wctx.save();
+  const big = Math.max(w, h);
+  const pad = Math.round(big * 0.018);
+  const fontSize = Math.max(11, Math.round(big * 0.022));
+  wctx.font = `600 ${fontSize}px Arial, sans-serif`;
+  const label = 'vectorprep.click';
+  const textW = wctx.measureText(label).width;
+  const chipW = textW + pad * 2, chipH = fontSize + pad * 1.4;
+  const chipX = w - chipW - pad, chipY = h - chipH - pad;
+  const r = chipH * 0.25;
+  wctx.beginPath();
+  wctx.moveTo(chipX + r, chipY);
+  wctx.arcTo(chipX + chipW, chipY, chipX + chipW, chipY + chipH, r);
+  wctx.arcTo(chipX + chipW, chipY + chipH, chipX, chipY + chipH, r);
+  wctx.arcTo(chipX, chipY + chipH, chipX, chipY, r);
+  wctx.arcTo(chipX, chipY, chipX + chipW, chipY, r);
+  wctx.closePath();
+  wctx.fillStyle = 'rgba(0,0,0,0.55)';
+  wctx.fill();
+  wctx.fillStyle = 'rgba(255,255,255,0.92)';
+  wctx.textAlign = 'center';
+  wctx.textBaseline = 'middle';
+  wctx.fillText(label, chipX + chipW / 2, chipY + chipH / 2 + 1);
+  wctx.restore();
+}
+
 document.getElementById('downloadSvg').addEventListener('click', async () => {
   await ensureFreshTrace();
   if (!lastSvgString) return;
   const name = await promptForFileName('vector-prep-trace', { label: 'Download SVG as:', confirmText: 'Download' });
   if (!name) return;
-  const blob = new Blob([lastSvgString], { type: 'image/svg+xml' });
+  let exportSvg = lastSvgString;
+  if (!window.graphicSuite && exportSvg.endsWith('</svg>')) {
+    exportSvg = exportSvg.slice(0, -6) + svgExportWatermarkGroup(canvas.width, canvas.height) + '</svg>';
+  }
+  const blob = new Blob([exportSvg], { type: 'image/svg+xml' });
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
   a.download = ensureExtension(name, 'svg');
@@ -3316,6 +3432,7 @@ document.getElementById('downloadPng').addEventListener('click', async () => {
     off.height = canvas.height;
     const offCtx = off.getContext('2d');
     offCtx.drawImage(img, 0, 0, off.width, off.height);
+    if (!window.graphicSuite) drawPngExportWatermark(offCtx, off.width, off.height);
     off.toBlob(blob => {
       const a = document.createElement('a');
       a.href = URL.createObjectURL(blob);
@@ -3961,21 +4078,23 @@ modeSelect.dispatchEvent(new Event('change'));
     document.addEventListener('pointerup', () => { resizing = false; });
   });
 
-  // Trace mode is the natural first stop after loading an image, so open
-  // it by default rather than leaving the user looking at a bare canvas
-  // with no indication of where to go next. Exposed on window so the
-  // loadImageFile wrapper below can call it again on every subsequent
-  // image load too, not just this initial page-load call.
-  function openTracePanelByDefault() {
+  // Opens on Upscale by default rather than leaving the user looking at a bare canvas with no
+  // indication of where to go next — changed from Trace mode per direct request, to match the
+  // rail's own top-to-bottom sequence (Upscale -> Crop -> Trace -> Detail -> Touch-up -> Export)
+  // now that Next Step below walks that same order. Exposed on window so the loadImageFile wrapper
+  // below can call it again on every subsequent image load too, not just this initial page-load
+  // call. Name kept generic (not tied to "Trace") since which panel opens first is now just "the
+  // rail's first entry", not something inherently about tracing.
+  function openFirstPanelByDefault() {
     closeAll();
     resetPopoutPositions();
-    const tracePanel = document.getElementById('panel-trace');
-    tracePanel.classList.add('open');
-    document.querySelector('.rail-btn[data-panel="panel-trace"]').classList.add('active');
+    const firstPanel = document.getElementById('panel-upscale');
+    firstPanel.classList.add('open');
+    document.querySelector('.rail-btn[data-panel="panel-upscale"]').classList.add('active');
     document.body.classList.add('panel-open');
-    centerPopoutOnPreview(tracePanel);
+    centerPopoutOnPreview(firstPanel);
   }
-  window.__openTracePanelByDefault = openTracePanelByDefault;
+  window.__openTracePanelByDefault = openFirstPanelByDefault;
   // No unconditional call here at parse time — nothing is visible to
   // center against yet (.stage is still display:none, so previewHolder
   // and the panel itself both measure as zero-sized). The loadImageFile
@@ -3987,8 +4106,59 @@ modeSelect.dispatchEvent(new Event('change'));
   // listener alongside the button's own existing one, not a replacement,
   // so its original erase-everything behavior is untouched.
   const resetBtn = document.getElementById('reset');
-  if (resetBtn) resetBtn.addEventListener('click', openTracePanelByDefault);
+  if (resetBtn) resetBtn.addEventListener('click', openFirstPanelByDefault);
 })();
+
+// "Next Step" — a semi-guided walk down the rail's own tool order, ported over from Print Prep
+// after it proved out well there. Pure navigation, not a claim that a step is "finished" — works
+// identically whether or not you touched anything in the panel it's leaving. Reuses the exact same
+// rail-btn click the sidebar icons already use (open next, close current, re-center it) rather than
+// duplicating that logic, so behaviour can never drift between the two ways of moving between
+// panels. Export excluded — nothing comes after it.
+const NEXT_STEP_SEQUENCE = ['panel-upscale', 'panel-crop', 'panel-trace', 'panel-detail', 'panel-touchup', 'panel-export'];
+NEXT_STEP_SEQUENCE.slice(0, -1).forEach((panelId, i) => {
+  const panel = document.getElementById(panelId);
+  if (!panel) return;
+  const nextId = NEXT_STEP_SEQUENCE[i + 1];
+  const wrap = document.createElement('div');
+  wrap.style.cssText = 'margin-top:14px;padding-top:12px;border-top:1px solid var(--paper-line);';
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'action next-step-btn';
+  btn.textContent = 'Next Step →';
+  btn.addEventListener('click', () => {
+    const nextBtn = document.querySelector(`.rail-btn[data-panel="${nextId}"]`);
+    if (nextBtn) nextBtn.click();
+  });
+  wrap.appendChild(btn);
+  panel.appendChild(wrap);
+});
+
+// This standalone site (vectorprep.click) is the free preview; Upscale, Crop and the Touch-up
+// brush are desktop-app-only features that fund the rest of it. window.graphicSuite only exists
+// when this page is loaded inside the Graphical Magic desktop app (injected by its preload
+// script) — plain undefined here, on any ordinary browser. Every control in a locked panel is
+// actually disabled (not just dimmed) the moment the panel opens, with a clear red notice
+// explaining why, instead of only announcing itself the moment you tried to use it. Next Step and
+// each panel's own close button stay usable so a locked panel is never a dead end.
+function lockPanelForDesktopOnly(panelId, featureLabel) {
+  if (window.graphicSuite) return;
+  const panel = document.getElementById(panelId);
+  if (!panel) return;
+  panel.classList.add('gm-locked');
+  panel.querySelectorAll('input, select, button, textarea').forEach(el => {
+    if (el.classList.contains('popout-close') || el.classList.contains('next-step-btn')) return;
+    el.disabled = true;
+  });
+  const notice = document.createElement('div');
+  notice.style.cssText = 'background:rgba(229,88,107,0.14);border:1px solid rgba(229,88,107,0.45);color:#b0223a;font-weight:700;font-size:11.5px;line-height:1.5;padding:9px 10px;margin-bottom:12px;border-radius:2px;';
+  notice.textContent = `🔒 ${featureLabel} is a desktop-app-only feature. Please buy the desktop version to gain access to this tool.`;
+  const header = panel.querySelector('h3');
+  if (header) header.insertAdjacentElement('afterend', notice); else panel.prepend(notice);
+}
+lockPanelForDesktopOnly('panel-upscale', 'AI Upscaling');
+lockPanelForDesktopOnly('panel-crop', 'Crop');
+lockPanelForDesktopOnly('panel-touchup', 'Touch-up brush');
 
 // Re-open Trace mode (closing whatever else was open) every time a new
 // image loads, not just the very first one — otherwise loading a second
