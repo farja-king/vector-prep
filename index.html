@@ -1725,7 +1725,7 @@ function loadImageFile(file){
 document.getElementById('applyUpscale').addEventListener('click', async (e) => {
   const btn = e.target;
   if (!window.graphicSuite || !window.graphicSuite.upscaleImage) {
-    alert('AI upscaling is only available inside the desktop app.');
+    alert('This feature is being upgraded. Available soon.');
     return;
   }
   if (!originalImageData) return;
