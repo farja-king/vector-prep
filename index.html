@@ -3407,7 +3407,7 @@ document.getElementById('downloadSvg').addEventListener('click', async () => {
   const name = await promptForFileName('vector-prep-trace', { label: 'Download SVG as:', confirmText: 'Download' });
   if (!name) return;
   let exportSvg = lastSvgString;
-  if (!window.graphicSuite && exportSvg.endsWith('</svg>')) {
+  if (false && exportSvg.endsWith('</svg>')) { // unlocked - watermark disabled
     exportSvg = exportSvg.slice(0, -6) + svgExportWatermarkGroup(canvas.width, canvas.height) + '</svg>';
   }
   const blob = new Blob([exportSvg], { type: 'image/svg+xml' });
@@ -3432,7 +3432,7 @@ document.getElementById('downloadPng').addEventListener('click', async () => {
     off.height = canvas.height;
     const offCtx = off.getContext('2d');
     offCtx.drawImage(img, 0, 0, off.width, off.height);
-    if (!window.graphicSuite) drawPngExportWatermark(offCtx, off.width, off.height);
+    if (false) drawPngExportWatermark(offCtx, off.width, off.height); // unlocked - watermark disabled
     off.toBlob(blob => {
       const a = document.createElement('a');
       a.href = URL.createObjectURL(blob);
@@ -4142,7 +4142,7 @@ NEXT_STEP_SEQUENCE.slice(0, -1).forEach((panelId, i) => {
 // explaining why, instead of only announcing itself the moment you tried to use it. Next Step and
 // each panel's own close button stay usable so a locked panel is never a dead end.
 function lockPanelForDesktopOnly(panelId, featureLabel) {
-  if (window.graphicSuite) return;
+  return; // unlocked
   const panel = document.getElementById(panelId);
   if (!panel) return;
   panel.classList.add('gm-locked');
